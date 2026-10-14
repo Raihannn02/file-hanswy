@@ -577,3 +577,23 @@ export async function deleteFile(fileId: string): Promise<void> {
     writeLocalDb(db);
   }
 }
+
+export async function getFile(fileId: string): Promise<FileItem | null> {
+  const isCloud = isSupabaseConfigured && supabase !== null;
+
+  if (isCloud && supabase) {
+    const { data: file, error } = await supabase
+      .from('files')
+      .select('*')
+      .eq('id', fileId)
+      .single();
+
+    if (error || !file) {
+      return null;
+    }
+    return file as FileItem;
+  }
+
+  const db = readLocalDb();
+  return db.files.find((f) => f.id === fileId) || null;
+}

@@ -115,6 +115,18 @@ export default function FileHansWYApp() {
   // Toasts
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
+  // Auto-download state (when URL has ?download=...)
+  const [autoDownloadFile, setAutoDownloadFile] = useState<{
+    id: string;
+    name: string;
+    size: number;
+    mime_type?: string;
+    is_chunked: boolean;
+    download_url: string;
+  } | null>(null);
+  const [autoDownloadLoading, setAutoDownloadLoading] = useState<boolean>(false);
+  const [autoDownloadError, setAutoDownloadError] = useState<string>('');
+
   const showToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
     const id = `${Date.now()}-${Math.random()}`;
     setToasts((prev) => [...prev, { id, text, type }]);
@@ -631,7 +643,7 @@ export default function FileHansWYApp() {
   const copyDirectLink = (file: FileItem) => {
     let fullUrl = '';
     if (file.download_url.startsWith('chunked:')) {
-      fullUrl = `${window.location.origin}/?download=${file.id}`;
+      fullUrl = `${window.location.origin}/api/download/${file.id}`;
     } else {
       fullUrl = file.download_url.startsWith('http')
         ? file.download_url
@@ -644,65 +656,27 @@ export default function FileHansWYApp() {
   // State & Handler for File Downloads (both direct and chunked)
   const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
 
-  const handleDownloadFile = async (file: FileItem) => {
-    if (!file.download_url.startsWith('chunked:')) {
-      // Normal direct download
-      const a = document.createElement('a');
-      a.href = file.download_url;
-      a.download = file.name;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      return;
-    }
-
-    // Chunked download: fetch each part and stitch in-browser
-    const parts = file.download_url.split(':');
-    const totalChunks = parseInt(parts[1], 10);
-    const basePath = parts.slice(2).join(':');
-
-    if (!supabaseBrowser) {
-      showToast('Client Supabase belum siap', 'error');
-      return;
+  const handleDownloadFile = (file: FileItem) => {
+    let dlUrl = '';
+    if (file.download_url.startsWith('chunked:')) {
+      dlUrl = `/api/download/${file.id}`;
+    } else {
+      dlUrl = file.download_url.startsWith('http')
+        ? file.download_url
+        : `${window.location.origin}${file.download_url}`;
     }
 
     setDownloadingFileId(file.id);
-    showToast(`Mempersiapkan unduhan "${file.name}" (0/${totalChunks} bagian)...`, 'info');
-
-    try {
-      const chunkBlobs: Blob[] = [];
-      for (let i = 0; i < totalChunks; i++) {
-        const chunkPath = `${basePath}_part${i}`;
-        const { data: urlData } = supabaseBrowser.storage
-          .from(BROWSER_STORAGE_BUCKET)
-          .getPublicUrl(chunkPath);
-
-        const res = await fetch(urlData.publicUrl);
-        if (!res.ok) {
-          throw new Error(`Gagal mengunduh bagian ${i + 1}/${totalChunks} (HTTP ${res.status})`);
-        }
-        const blob = await res.blob();
-        chunkBlobs.push(blob);
-        showToast(`Mengunduh "${file.name}" (${i + 1}/${totalChunks} bagian)...`, 'info');
-      }
-
-      const finalBlob = new Blob(chunkBlobs, { type: file.mime_type || 'application/octet-stream' });
-      const blobUrl = URL.createObjectURL(finalBlob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = file.name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
-      showToast(`File "${file.name}" berhasil diunduh! ✓`, 'success');
-    } catch (err) {
-      showToast(`Gagal mengunduh: ${(err as Error).message}`, 'error');
-    } finally {
+    const a = document.createElement('a');
+    a.href = dlUrl;
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    showToast(`Memulai unduhan "${file.name}"... 🚀`, 'info');
+    setTimeout(() => {
       setDownloadingFileId(null);
-    }
+    }, 2000);
   };
 
   // Auto-download when URL has ?download=fileId
@@ -710,15 +684,52 @@ export default function FileHansWYApp() {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     const downloadId = params.get('download');
-    if (downloadId && files.length > 0) {
-      const target = files.find((f) => f.id === downloadId);
-      if (target) {
-        handleDownloadFile(target);
-        const newUrl = window.location.pathname;
-        window.history.replaceState({}, '', newUrl);
-      }
-    }
-  }, [files]);
+    if (!downloadId) return;
+
+    let isMounted = true;
+    setAutoDownloadLoading(true);
+    setAutoDownloadError('');
+
+    fetch(`/api/download/${downloadId}?info=true`)
+      .then((res) => {
+        if (!res.ok) throw new Error('File tidak ditemukan atau telah dihapus.');
+        return res.json();
+      })
+      .then((data) => {
+        if (!isMounted) return;
+        if (data.success && data.file) {
+          const target = data.file;
+          setAutoDownloadFile(target);
+          setAutoDownloadLoading(false);
+
+          // Direct trigger download
+          const dlUrl = target.is_chunked
+            ? `/api/download/${target.id}`
+            : (target.download_url.startsWith('http') ? target.download_url : `${window.location.origin}${target.download_url}`);
+
+          const a = document.createElement('a');
+          a.href = dlUrl;
+          a.download = target.name;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+
+          showToast(`Mengunduh "${target.name}" (${formatFileSize(target.size)})... 🚀`, 'info');
+        } else {
+          throw new Error(data.error || 'File tidak ditemukan');
+        }
+      })
+      .catch((err) => {
+        if (!isMounted) return;
+        setAutoDownloadLoading(false);
+        setAutoDownloadError(err.message || 'Gagal memuat informasi file');
+        showToast(err.message || 'Gagal mengunduh file', 'error');
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Format File Size
   const formatFileSize = (bytes: number) => {
@@ -1386,6 +1397,134 @@ export default function FileHansWYApp() {
                 onClick={handleDelete}
               >
                 {deleting ? <><RotateCw size={15} style={{ animation: 'spin 1s linear infinite' }} /> Menghapus...</> : 'Ya, Hapus'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AUTO DOWNLOAD MODAL / CARD */}
+      {(autoDownloadFile || autoDownloadLoading || autoDownloadError) && (
+        <div
+          className="modal-overlay"
+          onClick={() => {
+            setAutoDownloadFile(null);
+            setAutoDownloadError('');
+            const newUrl = window.location.pathname;
+            window.history.replaceState({}, '', newUrl);
+          }}
+        >
+          <div className="modal-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+            <div className="modal-header">
+              <h3 className="modal-title">
+                {autoDownloadLoading ? 'Mencari File...' : autoDownloadError ? 'Gagal Mengunduh' : 'Unduhan File'}
+              </h3>
+              <button
+                className="btn-icon"
+                onClick={() => {
+                  setAutoDownloadFile(null);
+                  setAutoDownloadError('');
+                  const newUrl = window.location.pathname;
+                  window.history.replaceState({}, '', newUrl);
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="modal-body" style={{ textAlign: 'center', padding: '24px 20px' }}>
+              {autoDownloadLoading && (
+                <div>
+                  <RotateCw size={36} color="var(--accent-red)" style={{ animation: 'spin 1s linear infinite', margin: '0 auto 14px auto' }} />
+                  <p style={{ color: 'var(--text-secondary)' }}>Menghubungkan dan menyiapkan unduhan...</p>
+                </div>
+              )}
+
+              {autoDownloadError && (
+                <div>
+                  <AlertCircle size={40} color="#ff4757" style={{ margin: '0 auto 12px auto' }} />
+                  <p style={{ color: '#ff6b75', fontWeight: 600 }}>{autoDownloadError}</p>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '8px' }}>
+                    Pastikan tautan yang Anda masukkan benar atau file belum dihapus.
+                  </p>
+                </div>
+              )}
+
+              {autoDownloadFile && (
+                <div>
+                  <div
+                    style={{
+                      width: '64px',
+                      height: '64px',
+                      borderRadius: '16px',
+                      background: 'rgba(230, 40, 49, 0.1)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      margin: '0 auto 16px auto',
+                      color: 'var(--accent-red)',
+                    }}
+                  >
+                    <Download size={32} />
+                  </div>
+                  <h4 style={{ fontSize: '1.1rem', fontWeight: 600, color: '#ffffff', marginBottom: '6px', wordBreak: 'break-word' }}>
+                    {autoDownloadFile.name}
+                  </h4>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '18px' }}>
+                    Ukuran: <b>{formatFileSize(autoDownloadFile.size)}</b>
+                    {autoDownloadFile.name.endsWith('.apk') && (
+                      <span style={{ color: '#52e38c', marginLeft: '8px' }}>✓ File APK Android</span>
+                    )}
+                  </p>
+
+                  <div
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.04)',
+                      borderRadius: '10px',
+                      padding: '12px 14px',
+                      fontSize: '0.82rem',
+                      color: 'var(--text-muted)',
+                      marginBottom: '20px',
+                      textAlign: 'left',
+                      lineHeight: '1.4',
+                    }}
+                  >
+                    💡 Unduhan telah dipicu otomatis. Jika di ponsel Anda unduhan tidak berjalan otomatis, silakan klik tombol di bawah untuk mengunduh langsung.
+                  </div>
+
+                  <a
+                    href={autoDownloadFile.is_chunked ? `/api/download/${autoDownloadFile.id}` : (autoDownloadFile.download_url.startsWith('http') ? autoDownloadFile.download_url : `${typeof window !== 'undefined' ? window.location.origin : ''}${autoDownloadFile.download_url}`)}
+                    download={autoDownloadFile.name}
+                    className="btn-red"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      textDecoration: 'none',
+                      width: '100%',
+                      padding: '12px',
+                      fontSize: '0.95rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <Download size={18} />
+                    Unduh File Sekarang
+                  </a>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer" style={{ justifyContent: 'center' }}>
+              <button
+                type="button"
+                className="btn-cancel"
+                onClick={() => {
+                  setAutoDownloadFile(null);
+                  setAutoDownloadError('');
+                  const newUrl = window.location.pathname;
+                  window.history.replaceState({}, '', newUrl);
+                }}
+              >
+                Tutup
               </button>
             </div>
           </div>
