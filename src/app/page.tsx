@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, DragEvent } from 'react';
 import {
   Folder,
   FileText,
@@ -26,6 +26,11 @@ import {
   Music,
   Video,
   Image as ImageIcon,
+  Files,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  Loader2,
 } from 'lucide-react';
 import { FolderItem, FileItem, BreadcrumbItem } from '@/lib/types';
 
@@ -38,6 +43,32 @@ interface ToastMessage {
   id: string;
   text: string;
   type: 'success' | 'error' | 'info';
+}
+
+// ---- Bulk Upload Types ----
+type UploadStatus = 'queued' | 'uploading' | 'success' | 'error';
+
+interface UploadQueueItem {
+  id: string;
+  file: File;
+  status: UploadStatus;
+  progress: number; // 0-100
+  errorMessage?: string;
+}
+
+// Helper to safely parse JSON from fetch response
+async function safeParseJson(res: Response): Promise<{ success: boolean; [key: string]: unknown }> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Response was not JSON (e.g. Vercel size limit HTML error page)
+    const statusText = res.statusText || `HTTP ${res.status}`;
+    if (res.status === 413) {
+      return { success: false, error: 'Ukuran file terlalu besar. Maksimal 4.5 MB per file di Vercel Hobby Plan.' };
+    }
+    return { success: false, error: `Server error (${statusText}): ${text.substring(0, 120)}` };
+  }
 }
 
 export default function FileHansWYApp() {
@@ -65,35 +96,39 @@ export default function FileHansWYApp() {
 
   const [showCreateFolderModal, setShowCreateFolderModal] = useState<boolean>(false);
   const [newFolderName, setNewFolderName] = useState<string>('');
+  const [creatingFolder, setCreatingFolder] = useState<boolean>(false);
 
+  // Upload Modal (Bulk)
   const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
-  const [selectedUploadFile, setSelectedUploadFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState<boolean>(false);
+  const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
+  const [isDragOver, setIsDragOver] = useState<boolean>(false);
+  const [isProcessingQueue, setIsProcessingQueue] = useState<boolean>(false);
+  const bulkFileInputRef = useRef<HTMLInputElement>(null);
 
   const [renameTarget, setRenameTarget] = useState<{ type: 'folder' | 'file'; id: string; name: string } | null>(null);
   const [renameInput, setRenameInput] = useState<string>('');
 
   const [deleteTarget, setDeleteTarget] = useState<{ type: 'folder' | 'file'; id: string; name: string } | null>(null);
+  const [deleting, setDeleting] = useState<boolean>(false);
 
   // Toasts
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const showToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
     const id = `${Date.now()}-${Math.random()}`;
     setToasts((prev) => [...prev, { id, text, type }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4500);
+    }, 5000);
   };
 
   // Check auth status
   const checkAuth = async () => {
     try {
       const res = await fetch('/api/auth');
-      const data = await res.json();
+      const data = await safeParseJson(res);
       if (data.user) {
-        setUser(data.user);
+        setUser(data.user as UserInfo);
       }
     } catch (e) {
       console.error('Failed to check auth:', e);
@@ -109,20 +144,29 @@ export default function FileHansWYApp() {
       try {
         const query = folderId ? `?folderId=${encodeURIComponent(folderId)}` : '';
         const res = await fetch(`/api/folders${query}`);
-        const result = await res.json();
+        const result = await safeParseJson(res);
 
         if (result.success && result.data) {
-          setCurrentFolder(result.data.currentFolder);
-          setBreadcrumbs(result.data.breadcrumbs);
-          setFolders(result.data.folders);
-          setFiles(result.data.files);
-          setIsCloudStorage(result.data.isCloudStorage);
-          setSchemaMissing(Boolean(result.data.schemaMissing));
-          if (result.data.schemaMissing && result.data.errorMessage) {
-            setSchemaErrorMessage(result.data.errorMessage);
+          const d = result.data as {
+            currentFolder: FolderItem | null;
+            breadcrumbs: BreadcrumbItem[];
+            folders: FolderItem[];
+            files: FileItem[];
+            isCloudStorage: boolean;
+            schemaMissing?: boolean;
+            errorMessage?: string;
+          };
+          setCurrentFolder(d.currentFolder);
+          setBreadcrumbs(d.breadcrumbs);
+          setFolders(d.folders);
+          setFiles(d.files);
+          setIsCloudStorage(d.isCloudStorage);
+          setSchemaMissing(Boolean(d.schemaMissing));
+          if (d.schemaMissing && d.errorMessage) {
+            setSchemaErrorMessage(d.errorMessage);
           }
         } else {
-          showToast(result.error || 'Gagal memuat isi direktori', 'error');
+          showToast((result.error as string) || 'Gagal memuat isi direktori', 'error');
         }
       } catch (err) {
         showToast((err as Error).message || 'Terjadi kesalahan jaringan', 'error');
@@ -139,12 +183,22 @@ export default function FileHansWYApp() {
     fetchContents(currentFolderId);
   }, [currentFolderId, fetchContents]);
 
-  // Navigate to folder
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Element;
+      if (!target.closest('.user-status-card') && !target.closest('.auth-dropdown')) {
+        setShowAuthDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
   const navigateToFolder = (id: string | null) => {
     setCurrentFolderId(id);
   };
 
-  // Navigate up to parent
   const navigateToParent = () => {
     if (breadcrumbs.length > 1) {
       const parentBreadcrumb = breadcrumbs[breadcrumbs.length - 2];
@@ -164,14 +218,14 @@ export default function FileHansWYApp() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: adminPasswordInput }),
       });
-      const data = await res.json();
+      const data = await safeParseJson(res);
       if (data.success) {
-        setUser(data.user);
+        setUser(data.user as UserInfo);
         setShowLoginModal(false);
         setAdminPasswordInput('');
-        showToast('Login berhasil sebagai HansWY (Admin)', 'success');
+        showToast('Login berhasil sebagai HansWY (Admin) ✓', 'success');
       } else {
-        setAuthError(data.error || 'Password salah');
+        setAuthError((data.error as string) || 'Password salah');
       }
     } catch {
       setAuthError('Gagal menghubungkan ke server');
@@ -204,78 +258,185 @@ export default function FileHansWYApp() {
   const handleCreateFolder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!requireAdmin()) return;
-
     if (!newFolderName.trim()) {
       showToast('Nama folder wajib diisi', 'error');
       return;
     }
 
+    setCreatingFolder(true);
     try {
       const res = await fetch('/api/folders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: newFolderName.trim(),
-          parentId: currentFolderId,
-        }),
+        body: JSON.stringify({ name: newFolderName.trim(), parentId: currentFolderId }),
       });
-      const data = await res.json();
+      const data = await safeParseJson(res);
       if (data.success) {
-        showToast(`Folder "${newFolderName}" berhasil dibuat`, 'success');
+        showToast(`Folder "${newFolderName}" berhasil dibuat ✓`, 'success');
         setNewFolderName('');
         setShowCreateFolderModal(false);
         fetchContents(currentFolderId, true);
       } else {
-        showToast(data.error || 'Gagal membuat folder', 'error');
+        showToast((data.error as string) || 'Gagal membuat folder', 'error');
       }
     } catch (err) {
       showToast((err as Error).message, 'error');
+    } finally {
+      setCreatingFolder(false);
     }
   };
 
-  // Handle Upload File
-  const handleUploadFile = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!requireAdmin()) return;
+  // ---- BULK UPLOAD LOGIC ----
 
-    if (!selectedUploadFile) {
-      showToast('Pilih file terlebih dahulu', 'error');
-      return;
+  const addFilesToQueue = (newFiles: File[]) => {
+    const items: UploadQueueItem[] = newFiles.map((f) => ({
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      file: f,
+      status: 'queued',
+      progress: 0,
+    }));
+    setUploadQueue((prev) => [...prev, ...items]);
+  };
+
+  const handleBulkFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      addFilesToQueue(Array.from(e.target.files));
+      e.target.value = ''; // reset so same files can be re-added
     }
+  };
 
-    setUploading(true);
+  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(false);
+  };
+
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      addFilesToQueue(Array.from(e.dataTransfer.files));
+    }
+  };
+
+  const removeFromQueue = (id: string) => {
+    setUploadQueue((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const uploadSingleFile = async (item: UploadQueueItem): Promise<void> => {
+    // Mark as uploading
+    setUploadQueue((prev) =>
+      prev.map((i) => (i.id === item.id ? { ...i, status: 'uploading', progress: 10 } : i))
+    );
+
     const formData = new FormData();
-    formData.append('file', selectedUploadFile);
+    formData.append('file', item.file);
     if (currentFolderId) {
       formData.append('folderId', currentFolderId);
     }
 
     try {
+      // Simulate progress while uploading (XHR not available easily in fetch)
+      const progressInterval = setInterval(() => {
+        setUploadQueue((prev) =>
+          prev.map((i) =>
+            i.id === item.id && i.status === 'uploading' && i.progress < 85
+              ? { ...i, progress: i.progress + 15 }
+              : i
+          )
+        );
+      }, 400);
+
       const res = await fetch('/api/files', {
         method: 'POST',
         body: formData,
       });
-      const data = await res.json();
+
+      clearInterval(progressInterval);
+
+      const data = await safeParseJson(res);
+
       if (data.success) {
-        showToast(`File "${selectedUploadFile.name}" berhasil diunggah`, 'success');
-        setSelectedUploadFile(null);
-        setShowUploadModal(false);
-        fetchContents(currentFolderId, true);
+        setUploadQueue((prev) =>
+          prev.map((i) =>
+            i.id === item.id ? { ...i, status: 'success', progress: 100 } : i
+          )
+        );
       } else {
-        showToast(data.error || 'Gagal mengunggah file', 'error');
+        setUploadQueue((prev) =>
+          prev.map((i) =>
+            i.id === item.id
+              ? { ...i, status: 'error', progress: 0, errorMessage: (data.error as string) || 'Upload gagal' }
+              : i
+          )
+        );
       }
     } catch (err) {
-      showToast((err as Error).message, 'error');
-    } finally {
-      setUploading(false);
+      setUploadQueue((prev) =>
+        prev.map((i) =>
+          i.id === item.id
+            ? { ...i, status: 'error', progress: 0, errorMessage: (err as Error).message }
+            : i
+        )
+      );
     }
+  };
+
+  const startBulkUpload = async () => {
+    if (!requireAdmin()) return;
+
+    const queued = uploadQueue.filter((i) => i.status === 'queued');
+    if (queued.length === 0) {
+      showToast('Tidak ada file dalam antrean untuk diunggah', 'info');
+      return;
+    }
+
+    setIsProcessingQueue(true);
+
+    // Upload files sequentially (prevents overwhelming the server)
+    for (const item of queued) {
+      await uploadSingleFile(item);
+    }
+
+    setIsProcessingQueue(false);
+
+    // Refresh contents
+    fetchContents(currentFolderId, true);
+
+    // Summary toast
+    const finalQueue = uploadQueue;
+    const successCount = finalQueue.filter((i) => i.status === 'success').length + queued.length;
+    const failCount = 0; // Will be updated after state settles
+
+    setTimeout(() => {
+      setUploadQueue((prev) => {
+        const s = prev.filter((i) => i.status === 'success').length;
+        const f = prev.filter((i) => i.status === 'error').length;
+        if (s > 0) showToast(`${s} file berhasil diunggah${f > 0 ? `, ${f} file gagal` : ''} ✓`, f > 0 ? 'info' : 'success');
+        return prev;
+      });
+    }, 300);
+  };
+
+  const clearCompletedFromQueue = () => {
+    setUploadQueue((prev) => prev.filter((i) => i.status === 'queued' || i.status === 'uploading'));
+  };
+
+  const closeUploadModal = () => {
+    if (isProcessingQueue) return;
+    setShowUploadModal(false);
+    setUploadQueue([]);
+    setIsDragOver(false);
   };
 
   // Handle Rename
   const handleRename = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!requireAdmin() || !renameTarget) return;
-
     if (!renameInput.trim()) {
       showToast('Nama baru tidak boleh kosong', 'error');
       return;
@@ -293,13 +454,13 @@ export default function FileHansWYApp() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
+      const data = await safeParseJson(res);
       if (data.success) {
-        showToast(`Berhasil mengubah nama menjadi "${renameInput}"`, 'success');
+        showToast(`Berhasil diubah menjadi "${renameInput}" ✓`, 'success');
         setRenameTarget(null);
         fetchContents(currentFolderId, true);
       } else {
-        showToast(data.error || 'Gagal mengubah nama', 'error');
+        showToast((data.error as string) || 'Gagal mengubah nama', 'error');
       }
     } catch (err) {
       showToast((err as Error).message, 'error');
@@ -309,7 +470,7 @@ export default function FileHansWYApp() {
   // Handle Delete
   const handleDelete = async () => {
     if (!requireAdmin() || !deleteTarget) return;
-
+    setDeleting(true);
     try {
       const endpoint =
         deleteTarget.type === 'folder'
@@ -317,19 +478,21 @@ export default function FileHansWYApp() {
           : `/api/files?fileId=${deleteTarget.id}`;
 
       const res = await fetch(endpoint, { method: 'DELETE' });
-      const data = await res.json();
+      const data = await safeParseJson(res);
       if (data.success) {
         showToast(
-          `${deleteTarget.type === 'folder' ? 'Folder' : 'File'} "${deleteTarget.name}" berhasil dihapus`,
+          `${deleteTarget.type === 'folder' ? 'Folder' : 'File'} "${deleteTarget.name}" berhasil dihapus ✓`,
           'success'
         );
         setDeleteTarget(null);
         fetchContents(currentFolderId, true);
       } else {
-        showToast(data.error || 'Gagal menghapus item', 'error');
+        showToast((data.error as string) || 'Gagal menghapus item', 'error');
       }
     } catch (err) {
       showToast((err as Error).message, 'error');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -338,9 +501,8 @@ export default function FileHansWYApp() {
     const fullUrl = file.download_url.startsWith('http')
       ? file.download_url
       : `${window.location.origin}${file.download_url}`;
-
     navigator.clipboard.writeText(fullUrl);
-    showToast('Tautan langsung berhasil disalin ke clipboard! 📋', 'success');
+    showToast('Tautan langsung berhasil disalin! 📋', 'success');
   };
 
   // Format File Size
@@ -352,18 +514,13 @@ export default function FileHansWYApp() {
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
   };
 
-  // Format Date (matching screenshot: 10/14/2026, 1:05:34 PM)
+  // Format Date
   const formatDate = (dateString: string) => {
     try {
       const d = new Date(dateString);
       return d.toLocaleString('en-US', {
-        month: 'numeric',
-        day: 'numeric',
-        year: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: true,
+        month: 'numeric', day: 'numeric', year: 'numeric',
+        hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true,
       });
     } catch {
       return dateString;
@@ -373,25 +530,29 @@ export default function FileHansWYApp() {
   // File icon selector
   const renderFileIcon = (file: FileItem) => {
     const ext = file.name.split('.').pop()?.toLowerCase();
-    if (ext === 'apk') {
-      return <Smartphone size={22} />;
-    }
-    if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext || '')) {
-      return <Archive size={22} />;
-    }
-    if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(ext || '')) {
-      return <ImageIcon size={22} />;
-    }
-    if (['mp4', 'mkv', 'mov', 'avi'].includes(ext || '')) {
-      return <Video size={22} />;
-    }
-    if (['mp3', 'wav', 'ogg', 'm4a'].includes(ext || '')) {
-      return <Music size={22} />;
-    }
+    if (ext === 'apk') return <Smartphone size={22} />;
+    if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext || '')) return <Archive size={22} />;
+    if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(ext || '')) return <ImageIcon size={22} />;
+    if (['mp4', 'mkv', 'mov', 'avi'].includes(ext || '')) return <Video size={22} />;
+    if (['mp3', 'wav', 'ogg', 'm4a'].includes(ext || '')) return <Music size={22} />;
     return <FileText size={22} />;
   };
 
+  const getFileIconForQueue = (file: File) => {
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    if (ext === 'apk') return <Smartphone size={16} />;
+    if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext || '')) return <Archive size={16} />;
+    if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(ext || '')) return <ImageIcon size={16} />;
+    if (['mp4', 'mkv', 'mov', 'avi'].includes(ext || '')) return <Video size={16} />;
+    if (['mp3', 'wav', 'ogg', 'm4a'].includes(ext || '')) return <Music size={16} />;
+    return <FileText size={16} />;
+  };
+
   const totalItemCount = folders.length + files.length;
+  const queuedCount = uploadQueue.filter((i) => i.status === 'queued').length;
+  const successCount = uploadQueue.filter((i) => i.status === 'success').length;
+  const errorCount = uploadQueue.filter((i) => i.status === 'error').length;
+  const uploadingCount = uploadQueue.filter((i) => i.status === 'uploading').length;
 
   return (
     <div className="app-container">
@@ -432,57 +593,21 @@ export default function FileHansWYApp() {
             <ChevronDown size={16} color="var(--text-muted)" />
           </div>
 
-          {/* Auth Dropdown Popup */}
+          {/* Auth Dropdown */}
           {showAuthDropdown && (
-            <div
-              style={{
-                position: 'absolute',
-                top: '100%',
-                left: 0,
-                right: 0,
-                backgroundColor: 'var(--bg-card)',
-                border: '1.5px solid var(--border-red)',
-                borderRadius: 'var(--radius-md)',
-                padding: '8px',
-                zIndex: 40,
-                boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-              }}
-            >
+            <div className="auth-dropdown">
               {user.role === 'admin' ? (
                 <button
                   onClick={handleLogout}
-                  style={{
-                    width: '100%',
-                    padding: '10px 14px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    borderRadius: 'var(--radius-sm)',
-                    color: '#ff4757',
-                    fontWeight: 600,
-                    fontSize: '0.9rem',
-                  }}
+                  style={{ width: '100%', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px', borderRadius: 'var(--radius-sm)', color: '#ff4757', fontWeight: 600, fontSize: '0.9rem' }}
                   className="nav-item"
                 >
                   <Lock size={16} /> Logout Admin
                 </button>
               ) : (
                 <button
-                  onClick={() => {
-                    setShowAuthDropdown(false);
-                    setShowLoginModal(true);
-                  }}
-                  style={{
-                    width: '100%',
-                    padding: '10px 14px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    borderRadius: 'var(--radius-sm)',
-                    color: 'var(--text-primary)',
-                    fontWeight: 600,
-                    fontSize: '0.9rem',
-                  }}
+                  onClick={() => { setShowAuthDropdown(false); setShowLoginModal(true); }}
+                  style={{ width: '100%', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px', borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.9rem' }}
                   className="nav-item"
                 >
                   <Unlock size={16} /> Login sebagai Admin
@@ -496,21 +621,9 @@ export default function FileHansWYApp() {
         <nav className="sidebar-nav">
           <button
             className={`nav-item ${currentFolderId === null ? 'active' : ''}`}
-            onClick={() => {
-              navigateToFolder(null);
-              setMobileSidebarOpen(false);
-            }}
+            onClick={() => { navigateToFolder(null); setMobileSidebarOpen(false); }}
           >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
               <polyline points="9 22 9 12 15 12 15 22" />
             </svg>
@@ -519,12 +632,7 @@ export default function FileHansWYApp() {
 
           <button
             className="nav-item"
-            onClick={() => {
-              if (requireAdmin()) {
-                setShowCreateFolderModal(true);
-                setMobileSidebarOpen(false);
-              }
-            }}
+            onClick={() => { if (requireAdmin()) { setShowCreateFolderModal(true); setMobileSidebarOpen(false); } }}
           >
             <Plus size={18} />
             Buat Folder
@@ -532,15 +640,10 @@ export default function FileHansWYApp() {
 
           <button
             className="nav-item"
-            onClick={() => {
-              if (requireAdmin()) {
-                setShowUploadModal(true);
-                setMobileSidebarOpen(false);
-              }
-            }}
+            onClick={() => { if (requireAdmin()) { setShowUploadModal(true); setMobileSidebarOpen(false); } }}
           >
-            <Upload size={18} />
-            Unggah File
+            <Files size={18} />
+            Bulk Upload
           </button>
         </nav>
 
@@ -565,7 +668,9 @@ export default function FileHansWYApp() {
                 {crumb.name}
               </span>
               {idx < breadcrumbs.length - 1 && (
-                <span className="breadcrumb-separator">&gt;</span>
+                <span className="breadcrumb-separator">
+                  <ChevronRight size={14} />
+                </span>
               )}
             </React.Fragment>
           ))}
@@ -573,18 +678,7 @@ export default function FileHansWYApp() {
 
         {/* Database Missing Warning Banner */}
         {schemaMissing && (
-          <div
-            style={{
-              backgroundColor: 'rgba(230, 40, 49, 0.12)',
-              border: '1.5px solid var(--accent-red)',
-              borderRadius: 'var(--radius-md)',
-              padding: '16px 20px',
-              marginBottom: '20px',
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: '14px',
-            }}
-          >
+          <div style={{ backgroundColor: 'rgba(230, 40, 49, 0.12)', border: '1.5px solid var(--accent-red)', borderRadius: 'var(--radius-md)', padding: '16px 20px', marginBottom: '20px', display: 'flex', alignItems: 'flex-start', gap: '14px' }}>
             <AlertCircle size={24} color="var(--accent-red)" style={{ flexShrink: 0, marginTop: '2px' }} />
             <div style={{ flex: 1 }}>
               <h4 style={{ color: '#ffffff', fontSize: '0.98rem', fontWeight: 700, marginBottom: '6px' }}>
@@ -592,7 +686,7 @@ export default function FileHansWYApp() {
               </h4>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', lineHeight: '1.6' }}>
                 Tabel database belum dibuat di proyek Supabase Anda (<b>hputlrqzncmtqfhkoqqb.supabase.co</b>).
-                Agar pembuatan folder baru, upload file, dan penghapusan folder dapat tersimpan secara permanen 24 jam di Vercel:
+                Agar pembuatan folder, upload file, dan penghapusan dapat tersimpan secara permanen:
               </p>
               <ol style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', marginTop: '6px', paddingLeft: '18px', lineHeight: '1.6' }}>
                 <li>Buka menu <b>SQL Editor</b> di dashboard Supabase Anda.</li>
@@ -603,6 +697,16 @@ export default function FileHansWYApp() {
           </div>
         )}
 
+        {/* Cloud/Local Storage indicator */}
+        {!schemaMissing && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px' }}>
+            <span style={{ fontSize: '0.72rem', color: isCloudStorage ? '#52e38c' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: isCloudStorage ? '#52e38c' : 'var(--text-muted)', display: 'inline-block' }} />
+              {isCloudStorage ? 'Cloud Storage (Supabase)' : 'Local Storage'}
+            </span>
+          </div>
+        )}
+
         {/* Directory Header Banner Card */}
         <section className="directory-banner">
           <div className="directory-info">
@@ -610,9 +714,7 @@ export default function FileHansWYApp() {
               <Folder size={28} fill="currentColor" />
             </div>
             <div className="directory-titles">
-              <h2>
-                {currentFolder ? currentFolder.name : 'Root Directory'}
-              </h2>
+              <h2>{currentFolder ? currentFolder.name : 'Root Directory'}</h2>
               <p>{totalItemCount} {totalItemCount === 1 ? 'item' : 'items'}</p>
             </div>
           </div>
@@ -624,20 +726,13 @@ export default function FileHansWYApp() {
               disabled={refreshing}
               title="Perbarui daftar file dan folder"
             >
-              <RotateCw
-                size={16}
-                style={{
-                  animation: refreshing ? 'spin 1s linear infinite' : 'none',
-                }}
-              />
+              <RotateCw size={16} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} />
               Refresh
             </button>
 
             <button
               className="btn-secondary"
-              onClick={() => {
-                if (requireAdmin()) setShowCreateFolderModal(true);
-              }}
+              onClick={() => { if (requireAdmin()) setShowCreateFolderModal(true); }}
               title="Buat folder baru di direktori ini"
             >
               <Plus size={16} />
@@ -646,10 +741,8 @@ export default function FileHansWYApp() {
 
             <button
               className="btn-red"
-              onClick={() => {
-                if (requireAdmin()) setShowUploadModal(true);
-              }}
-              title="Unggah file baru ke direktori ini"
+              onClick={() => { if (requireAdmin()) setShowUploadModal(true); }}
+              title="Unggah file ke direktori ini"
             >
               <Upload size={16} />
               Upload
@@ -657,7 +750,7 @@ export default function FileHansWYApp() {
           </div>
         </section>
 
-        {/* Parent Directory Link (.. Go back up to parent) */}
+        {/* Parent Directory Link */}
         {currentFolderId !== null && (
           <div className="parent-nav-card" onClick={navigateToParent}>
             <div className="parent-icon-badge">
@@ -683,19 +776,9 @@ export default function FileHansWYApp() {
           <div className="items-list">
             {/* Empty state */}
             {folders.length === 0 && files.length === 0 && (
-              <div
-                style={{
-                  textAlign: 'center',
-                  padding: '50px 20px',
-                  backgroundColor: 'var(--bg-card)',
-                  borderRadius: 'var(--radius-md)',
-                  border: '1px dashed var(--border-subtle)',
-                }}
-              >
+              <div style={{ textAlign: 'center', padding: '50px 20px', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-md)', border: '1px dashed var(--border-subtle)' }}>
                 <Folder size={40} color="var(--text-muted)" style={{ margin: '0 auto 12px' }} />
-                <h3 style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>
-                  Direktori ini masih kosong
-                </h3>
+                <h3 style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>Direktori ini masih kosong</h3>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                   Klik tombol <b>Upload</b> untuk mengunggah file atau <b>Folder</b> untuk membuat folder baru.
                 </p>
@@ -705,11 +788,7 @@ export default function FileHansWYApp() {
             {/* FOLDERS LIST */}
             {folders.map((folder) => (
               <div key={folder.id} className="item-card">
-                <div
-                  className="item-left"
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => navigateToFolder(folder.id)}
-                >
+                <div className="item-left" style={{ cursor: 'pointer' }} onClick={() => navigateToFolder(folder.id)}>
                   <div className="item-badge folder">
                     <Folder size={22} fill="currentColor" />
                   </div>
@@ -723,7 +802,6 @@ export default function FileHansWYApp() {
                 </div>
 
                 <div className="item-actions">
-                  {/* Admin Tools */}
                   {user.role === 'admin' && (
                     <>
                       <button
@@ -749,12 +827,7 @@ export default function FileHansWYApp() {
                       </button>
                     </>
                   )}
-
-                  {/* Open Button (Matches Reference) */}
-                  <button
-                    className="btn-open"
-                    onClick={() => navigateToFolder(folder.id)}
-                  >
+                  <button className="btn-open" onClick={() => navigateToFolder(folder.id)}>
                     <Folder size={15} fill="currentColor" />
                     Open
                   </button>
@@ -772,51 +845,33 @@ export default function FileHansWYApp() {
                       {renderFileIcon(file)}
                     </div>
                     <div className="item-details">
-                      <div className="item-name" title={file.name}>
-                        {file.name}
-                      </div>
-                      <div className="item-meta">
-                        {formatFileSize(file.size)} • {formatDate(file.created_at)}
-                      </div>
+                      <div className="item-name" title={file.name}>{file.name}</div>
+                      <div className="item-meta">{formatFileSize(file.size)} • {formatDate(file.created_at)}</div>
                     </div>
                   </div>
 
                   <div className="item-actions">
-                    {/* Admin Tools */}
                     {user.role === 'admin' && (
                       <>
                         <button
                           className="btn-icon"
                           title="Ubah nama file"
-                          onClick={() => {
-                            setRenameTarget({ type: 'file', id: file.id, name: file.name });
-                            setRenameInput(file.name);
-                          }}
+                          onClick={() => { setRenameTarget({ type: 'file', id: file.id, name: file.name }); setRenameInput(file.name); }}
                         >
                           <Edit2 size={16} />
                         </button>
                         <button
                           className="btn-icon delete"
                           title="Hapus file"
-                          onClick={() => {
-                            setDeleteTarget({ type: 'file', id: file.id, name: file.name });
-                          }}
+                          onClick={() => setDeleteTarget({ type: 'file', id: file.id, name: file.name })}
                         >
                           <Trash2 size={16} />
                         </button>
                       </>
                     )}
-
-                    {/* Copy Link Button */}
-                    <button
-                      className="btn-icon"
-                      title="Salin tautan unduhan langsung"
-                      onClick={() => copyDirectLink(file)}
-                    >
+                    <button className="btn-icon" title="Salin tautan unduhan langsung" onClick={() => copyDirectLink(file)}>
                       <LinkIcon size={16} />
                     </button>
-
-                    {/* Download Button (Mint Green badge matching reference) */}
                     <a
                       href={file.download_url}
                       download={file.name}
@@ -852,12 +907,7 @@ export default function FileHansWYApp() {
           <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3 className="modal-title">Login Admin HansWY</h3>
-              <button
-                className="btn-icon"
-                onClick={() => setShowLoginModal(false)}
-              >
-                <X size={18} />
-              </button>
+              <button className="btn-icon" onClick={() => setShowLoginModal(false)}><X size={18} /></button>
             </div>
             <form onSubmit={handleLogin}>
               <div className="modal-body">
@@ -865,20 +915,7 @@ export default function FileHansWYApp() {
                   Masukkan password admin untuk mengakses fitur upload, buat folder, rename, dan hapus.
                 </p>
                 {authError && (
-                  <div
-                    style={{
-                      padding: '10px 14px',
-                      backgroundColor: 'rgba(230, 40, 49, 0.15)',
-                      border: '1px solid var(--accent-red)',
-                      borderRadius: 'var(--radius-md)',
-                      color: '#ff6b75',
-                      fontSize: '0.85rem',
-                      marginBottom: '16px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                    }}
-                  >
+                  <div style={{ padding: '10px 14px', backgroundColor: 'rgba(230, 40, 49, 0.15)', border: '1px solid var(--accent-red)', borderRadius: 'var(--radius-md)', color: '#ff6b75', fontSize: '0.85rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <AlertCircle size={16} /> {authError}
                   </div>
                 )}
@@ -896,16 +933,8 @@ export default function FileHansWYApp() {
                 </div>
               </div>
               <div className="modal-footer">
-                <button
-                  type="button"
-                  className="btn-cancel"
-                  onClick={() => setShowLoginModal(false)}
-                >
-                  Batal
-                </button>
-                <button type="submit" className="btn-red">
-                  Login Admin
-                </button>
+                <button type="button" className="btn-cancel" onClick={() => setShowLoginModal(false)}>Batal</button>
+                <button type="submit" className="btn-red">Login Admin</button>
               </div>
             </form>
           </div>
@@ -914,16 +943,11 @@ export default function FileHansWYApp() {
 
       {/* CREATE FOLDER MODAL */}
       {showCreateFolderModal && (
-        <div className="modal-overlay" onClick={() => setShowCreateFolderModal(false)}>
+        <div className="modal-overlay" onClick={() => !creatingFolder && setShowCreateFolderModal(false)}>
           <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3 className="modal-title">Buat Folder Baru</h3>
-              <button
-                className="btn-icon"
-                onClick={() => setShowCreateFolderModal(false)}
-              >
-                <X size={18} />
-              </button>
+              <button className="btn-icon" disabled={creatingFolder} onClick={() => setShowCreateFolderModal(false)}><X size={18} /></button>
             </div>
             <form onSubmit={handleCreateFolder}>
               <div className="modal-body">
@@ -937,19 +961,14 @@ export default function FileHansWYApp() {
                     onChange={(e) => setNewFolderName(e.target.value)}
                     autoFocus
                     required
+                    disabled={creatingFolder}
                   />
                 </div>
               </div>
               <div className="modal-footer">
-                <button
-                  type="button"
-                  className="btn-cancel"
-                  onClick={() => setShowCreateFolderModal(false)}
-                >
-                  Batal
-                </button>
-                <button type="submit" className="btn-red">
-                  Buat Folder
+                <button type="button" className="btn-cancel" disabled={creatingFolder} onClick={() => setShowCreateFolderModal(false)}>Batal</button>
+                <button type="submit" className="btn-red" disabled={creatingFolder}>
+                  {creatingFolder ? <><RotateCw size={15} style={{ animation: 'spin 1s linear infinite' }} /> Membuat...</> : 'Buat Folder'}
                 </button>
               </div>
             </form>
@@ -957,88 +976,134 @@ export default function FileHansWYApp() {
         </div>
       )}
 
-      {/* UPLOAD FILE MODAL */}
+      {/* BULK UPLOAD MODAL */}
       {showUploadModal && (
-        <div className="modal-overlay" onClick={() => !uploading && setShowUploadModal(false)}>
-          <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={closeUploadModal}>
+          <div
+            className="modal-dialog upload-modal-wide"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header">
-              <h3 className="modal-title">Unggah File ke Direktori</h3>
-              <button
-                className="btn-icon"
-                disabled={uploading}
-                onClick={() => setShowUploadModal(false)}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Files size={20} color="var(--accent-red)" />
+                <h3 className="modal-title">Bulk Upload File</h3>
+              </div>
+              <button className="btn-icon" disabled={isProcessingQueue} onClick={closeUploadModal}><X size={18} /></button>
+            </div>
+
+            <div className="modal-body">
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '14px' }}>
+                Lokasi target:{' '}
+                <b style={{ color: '#ffffff' }}>{currentFolder ? currentFolder.name : 'Root Directory'}</b>
+              </p>
+
+              {/* Drag & Drop Zone */}
+              <div
+                className={`drop-zone ${isDragOver ? 'drag-over' : ''}`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => !isProcessingQueue && bulkFileInputRef.current?.click()}
               >
-                <X size={18} />
+                <Upload size={32} color={isDragOver ? 'var(--accent-red)' : 'var(--text-muted)'} style={{ margin: '0 auto 10px', display: 'block', transition: 'color 0.2s' }} />
+                <p style={{ fontWeight: 600, color: isDragOver ? 'var(--accent-red)' : '#ffffff', marginBottom: '4px', textAlign: 'center', transition: 'color 0.2s' }}>
+                  {isDragOver ? 'Lepaskan file di sini...' : 'Seret & lepas file di sini'}
+                </p>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', textAlign: 'center' }}>
+                  atau klik untuk memilih beberapa file sekaligus
+                </p>
+                <input
+                  ref={bulkFileInputRef}
+                  type="file"
+                  multiple
+                  style={{ display: 'none' }}
+                  onChange={handleBulkFileChange}
+                  disabled={isProcessingQueue}
+                />
+              </div>
+
+              {/* Upload Queue */}
+              {uploadQueue.length > 0 && (
+                <div className="upload-queue">
+                  {/* Queue Summary */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                      {uploadQueue.length} file dalam antrean
+                      {successCount > 0 && <span style={{ color: '#52e38c' }}> · {successCount} berhasil</span>}
+                      {errorCount > 0 && <span style={{ color: '#ff4757' }}> · {errorCount} gagal</span>}
+                    </span>
+                    {!isProcessingQueue && (successCount > 0 || errorCount > 0) && (
+                      <button
+                        onClick={clearCompletedFromQueue}
+                        style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textDecoration: 'underline', cursor: 'pointer' }}
+                      >
+                        Hapus selesai
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Queue Items */}
+                  <div className="queue-list">
+                    {uploadQueue.map((item) => (
+                      <div key={item.id} className="queue-item">
+                        <div className="queue-icon">
+                          {item.status === 'success' && <CheckCircle2 size={16} color="#52e38c" />}
+                          {item.status === 'error' && <XCircle size={16} color="#ff4757" />}
+                          {item.status === 'uploading' && <Loader2 size={16} color="var(--accent-red)" style={{ animation: 'spin 1s linear infinite' }} />}
+                          {item.status === 'queued' && <Clock size={16} color="var(--text-muted)" />}
+                        </div>
+                        <div className="queue-file-info">
+                          <div className="queue-file-icon">
+                            {getFileIconForQueue(item.file)}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div className="queue-filename">{item.file.name}</div>
+                            {item.errorMessage && (
+                              <div className="queue-error">{item.errorMessage}</div>
+                            )}
+                            {item.status === 'uploading' && (
+                              <div className="queue-progress-bar">
+                                <div className="queue-progress-fill" style={{ width: `${item.progress}%` }} />
+                              </div>
+                            )}
+                          </div>
+                          <div className="queue-filesize">{formatFileSize(item.file.size)}</div>
+                        </div>
+                        {item.status !== 'uploading' && !isProcessingQueue && (
+                          <button
+                            className="btn-icon"
+                            style={{ padding: '2px', flexShrink: 0 }}
+                            onClick={() => removeFromQueue(item.id)}
+                            title="Hapus dari antrean"
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button type="button" className="btn-cancel" disabled={isProcessingQueue} onClick={closeUploadModal}>
+                {isProcessingQueue ? 'Sedang Upload...' : 'Tutup'}
+              </button>
+              <button
+                type="button"
+                className="btn-red"
+                disabled={isProcessingQueue || queuedCount === 0}
+                style={{ opacity: (isProcessingQueue || queuedCount === 0) ? 0.6 : 1 }}
+                onClick={startBulkUpload}
+              >
+                {isProcessingQueue ? (
+                  <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Mengunggah {uploadingCount > 0 ? `(${uploadingCount})` : ''}...</>
+                ) : (
+                  <><Upload size={16} /> Unggah {queuedCount > 0 ? `${queuedCount} File` : 'Semua'}</>
+                )}
               </button>
             </div>
-            <form onSubmit={handleUploadFile}>
-              <div className="modal-body">
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '14px' }}>
-                  Lokasi target:{' '}
-                  <b style={{ color: '#ffffff' }}>
-                    {currentFolder ? currentFolder.name : 'Root Directory'}
-                  </b>
-                </p>
-
-                <div
-                  style={{
-                    border: '2px dashed var(--border-subtle)',
-                    borderRadius: 'var(--radius-md)',
-                    padding: '30px 20px',
-                    textAlign: 'center',
-                    backgroundColor: 'var(--bg-subtle)',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s ease',
-                  }}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <Upload size={36} color="var(--accent-red)" style={{ margin: '0 auto 10px' }} />
-                  <p style={{ fontWeight: 600, color: '#ffffff', marginBottom: '4px' }}>
-                    {selectedUploadFile ? selectedUploadFile.name : 'Klik untuk memilih file'}
-                  </p>
-                  <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                    {selectedUploadFile
-                      ? `Ukuran: ${formatFileSize(selectedUploadFile.size)}`
-                      : 'Mendukung APK, ZIP, EXE, PDF, Gambar, dan semua format file'}
-                  </p>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    style={{ display: 'none' }}
-                    onChange={(e) => {
-                      if (e.target.files && e.target.files[0]) {
-                        setSelectedUploadFile(e.target.files[0]);
-                      }
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="modal-footer">
-                <button
-                  type="button"
-                  className="btn-cancel"
-                  disabled={uploading}
-                  onClick={() => setShowUploadModal(false)}
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="btn-red"
-                  disabled={uploading || !selectedUploadFile}
-                  style={{ opacity: uploading ? 0.7 : 1 }}
-                >
-                  {uploading ? (
-                    <>
-                      <RotateCw size={16} style={{ animation: 'spin 1s linear infinite' }} />
-                      Mengunggah...
-                    </>
-                  ) : (
-                    'Unggah Sekarang'
-                  )}
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       )}
@@ -1048,12 +1113,8 @@ export default function FileHansWYApp() {
         <div className="modal-overlay" onClick={() => setRenameTarget(null)}>
           <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3 className="modal-title">
-                Ubah Nama {renameTarget.type === 'folder' ? 'Folder' : 'File'}
-              </h3>
-              <button className="btn-icon" onClick={() => setRenameTarget(null)}>
-                <X size={18} />
-              </button>
+              <h3 className="modal-title">Ubah Nama {renameTarget.type === 'folder' ? 'Folder' : 'File'}</h3>
+              <button className="btn-icon" onClick={() => setRenameTarget(null)}><X size={18} /></button>
             </div>
             <form onSubmit={handleRename}>
               <div className="modal-body">
@@ -1070,16 +1131,8 @@ export default function FileHansWYApp() {
                 </div>
               </div>
               <div className="modal-footer">
-                <button
-                  type="button"
-                  className="btn-cancel"
-                  onClick={() => setRenameTarget(null)}
-                >
-                  Batal
-                </button>
-                <button type="submit" className="btn-red">
-                  Simpan Perubahan
-                </button>
+                <button type="button" className="btn-cancel" onClick={() => setRenameTarget(null)}>Batal</button>
+                <button type="submit" className="btn-red">Simpan Perubahan</button>
               </div>
             </form>
           </div>
@@ -1088,13 +1141,11 @@ export default function FileHansWYApp() {
 
       {/* DELETE CONFIRMATION MODAL */}
       {deleteTarget && (
-        <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
+        <div className="modal-overlay" onClick={() => !deleting && setDeleteTarget(null)}>
           <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3 className="modal-title">Konfirmasi Penghapusan</h3>
-              <button className="btn-icon" onClick={() => setDeleteTarget(null)}>
-                <X size={18} />
-              </button>
+              <button className="btn-icon" disabled={deleting} onClick={() => setDeleteTarget(null)}><X size={18} /></button>
             </div>
             <div className="modal-body">
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem', lineHeight: '1.5' }}>
@@ -1108,20 +1159,15 @@ export default function FileHansWYApp() {
               )}
             </div>
             <div className="modal-footer">
-              <button
-                type="button"
-                className="btn-cancel"
-                onClick={() => setDeleteTarget(null)}
-              >
-                Batal
-              </button>
+              <button type="button" className="btn-cancel" disabled={deleting} onClick={() => setDeleteTarget(null)}>Batal</button>
               <button
                 type="button"
                 className="btn-red"
-                style={{ backgroundColor: '#ff4757' }}
+                style={{ backgroundColor: '#ff4757', opacity: deleting ? 0.7 : 1 }}
+                disabled={deleting}
                 onClick={handleDelete}
               >
-                Ya, Hapus
+                {deleting ? <><RotateCw size={15} style={{ animation: 'spin 1s linear infinite' }} /> Menghapus...</> : 'Ya, Hapus'}
               </button>
             </div>
           </div>
@@ -1144,12 +1190,8 @@ export default function FileHansWYApp() {
 
       <style jsx global>{`
         @keyframes spin {
-          from {
-            transform: rotate(0deg);
-          }
-          to {
-            transform: rotate(360deg);
-          }
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
       `}</style>
     </div>

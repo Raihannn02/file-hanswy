@@ -2,35 +2,52 @@ import { NextRequest, NextResponse } from 'next/server';
 import { uploadFileRecord, renameFile, deleteFile } from '@/lib/storage-engine';
 import { isAdminAuthenticated } from '@/lib/auth';
 
-// 100MB file size limit for server processing
-export const maxDuration = 60; // 60 seconds on Vercel Pro/serverless
+// Increase max duration for large file uploads on Vercel
+export const maxDuration = 60;
+
+// Helper to safely return JSON responses even on error
+function safeJson(data: object, status = 200) {
+  return new NextResponse(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
 
 export async function POST(req: NextRequest) {
   try {
     if (!isAdminAuthenticated(req)) {
-      return NextResponse.json(
+      return safeJson(
         { success: false, error: 'Akses ditolak: Anda harus login sebagai Admin untuk mengunggah file.' },
-        { status: 403 }
+        403
       );
     }
 
-    const formData = await req.formData();
+    let formData: FormData;
+    try {
+      formData = await req.formData();
+    } catch (formErr) {
+      return safeJson(
+        { success: false, error: `Gagal membaca form data: ${(formErr as Error).message}. Pastikan ukuran file tidak melebihi batas.` },
+        400
+      );
+    }
+
     const file = formData.get('file') as File | null;
     const folderId = (formData.get('folderId') as string) || null;
 
     if (!file) {
-      return NextResponse.json(
+      return safeJson(
         { success: false, error: 'Tidak ada file yang dipilih untuk diunggah.' },
-        { status: 400 }
+        400
       );
     }
 
-    // Limit check (e.g. 100MB)
+    // Limit check (100MB)
     const MAX_SIZE = 100 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
-      return NextResponse.json(
-        { success: false, error: 'Ukuran file melebihi batas maksimal 100 MB.' },
-        { status: 400 }
+      return safeJson(
+        { success: false, error: `Ukuran file "${file.name}" (${(file.size / 1024 / 1024).toFixed(1)} MB) melebihi batas maksimal 100 MB.` },
+        400
       );
     }
 
@@ -45,54 +62,56 @@ export async function POST(req: NextRequest) {
       buffer,
     });
 
-    return NextResponse.json({
+    return safeJson({
       success: true,
-      message: 'File berhasil diunggah.',
+      message: `File "${file.name}" berhasil diunggah.`,
       data: fileRecord,
     });
   } catch (err) {
-    return NextResponse.json(
-      { success: false, error: (err as Error).message },
-      { status: 500 }
-    );
+    const message = (err as Error).message || 'Terjadi kesalahan saat mengunggah file.';
+    console.error('[POST /api/files] Error:', message);
+    return safeJson({ success: false, error: message }, 500);
   }
 }
 
 export async function PATCH(req: NextRequest) {
   try {
     if (!isAdminAuthenticated(req)) {
-      return NextResponse.json(
+      return safeJson(
         { success: false, error: 'Akses ditolak: Anda harus login sebagai Admin untuk mengubah file.' },
-        { status: 403 }
+        403
       );
     }
 
-    const body = await req.json();
+    let body: { fileId?: string; name?: string };
+    try {
+      body = await req.json();
+    } catch {
+      return safeJson({ success: false, error: 'Request body harus berformat JSON yang valid.' }, 400);
+    }
+
     const { fileId, name } = body;
 
     if (!fileId || !name || !name.trim()) {
-      return NextResponse.json(
+      return safeJson(
         { success: false, error: 'Parameter fileId dan name wajib diisi.' },
-        { status: 400 }
+        400
       );
     }
 
     const updated = await renameFile(fileId, name);
-    return NextResponse.json({ success: true, data: updated });
+    return safeJson({ success: true, data: updated });
   } catch (err) {
-    return NextResponse.json(
-      { success: false, error: (err as Error).message },
-      { status: 500 }
-    );
+    return safeJson({ success: false, error: (err as Error).message }, 500);
   }
 }
 
 export async function DELETE(req: NextRequest) {
   try {
     if (!isAdminAuthenticated(req)) {
-      return NextResponse.json(
+      return safeJson(
         { success: false, error: 'Akses ditolak: Anda harus login sebagai Admin untuk menghapus file.' },
-        { status: 403 }
+        403
       );
     }
 
@@ -100,18 +119,15 @@ export async function DELETE(req: NextRequest) {
     const fileId = searchParams.get('fileId');
 
     if (!fileId) {
-      return NextResponse.json(
+      return safeJson(
         { success: false, error: 'Parameter fileId wajib diisi.' },
-        { status: 400 }
+        400
       );
     }
 
     await deleteFile(fileId);
-    return NextResponse.json({ success: true, message: 'File berhasil dihapus.' });
+    return safeJson({ success: true, message: 'File berhasil dihapus.' });
   } catch (err) {
-    return NextResponse.json(
-      { success: false, error: (err as Error).message },
-      { status: 500 }
-    );
+    return safeJson({ success: false, error: (err as Error).message }, 500);
   }
 }
