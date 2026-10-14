@@ -50,6 +50,8 @@ export default function FileHansWYApp() {
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [isCloudStorage, setIsCloudStorage] = useState<boolean>(false);
+  const [schemaMissing, setSchemaMissing] = useState<boolean>(false);
+  const [schemaErrorMessage, setSchemaErrorMessage] = useState<string>('');
 
   // User & Auth State
   const [user, setUser] = useState<UserInfo>({ name: 'GuestUser', role: 'guest' });
@@ -82,7 +84,7 @@ export default function FileHansWYApp() {
     setToasts((prev) => [...prev, { id, text, type }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3800);
+    }, 4500);
   };
 
   // Check auth status
@@ -115,6 +117,10 @@ export default function FileHansWYApp() {
           setFolders(result.data.folders);
           setFiles(result.data.files);
           setIsCloudStorage(result.data.isCloudStorage);
+          setSchemaMissing(Boolean(result.data.schemaMissing));
+          if (result.data.schemaMissing && result.data.errorMessage) {
+            setSchemaErrorMessage(result.data.errorMessage);
+          }
         } else {
           showToast(result.error || 'Gagal memuat isi direktori', 'error');
         }
@@ -564,6 +570,38 @@ export default function FileHansWYApp() {
             </React.Fragment>
           ))}
         </div>
+
+        {/* Database Missing Warning Banner */}
+        {schemaMissing && (
+          <div
+            style={{
+              backgroundColor: 'rgba(230, 40, 49, 0.12)',
+              border: '1.5px solid var(--accent-red)',
+              borderRadius: 'var(--radius-md)',
+              padding: '16px 20px',
+              marginBottom: '20px',
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '14px',
+            }}
+          >
+            <AlertCircle size={24} color="var(--accent-red)" style={{ flexShrink: 0, marginTop: '2px' }} />
+            <div style={{ flex: 1 }}>
+              <h4 style={{ color: '#ffffff', fontSize: '0.98rem', fontWeight: 700, marginBottom: '6px' }}>
+                ⚠️ Database Supabase Belum Diinisialisasi
+              </h4>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', lineHeight: '1.6' }}>
+                Tabel database belum dibuat di proyek Supabase Anda (<b>hputlrqzncmtqfhkoqqb.supabase.co</b>).
+                Agar pembuatan folder baru, upload file, dan penghapusan folder dapat tersimpan secara permanen 24 jam di Vercel:
+              </p>
+              <ol style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', marginTop: '6px', paddingLeft: '18px', lineHeight: '1.6' }}>
+                <li>Buka menu <b>SQL Editor</b> di dashboard Supabase Anda.</li>
+                <li>Salin seluruh kode dari berkas <b>supabase-schema.sql</b> lalu klik <b>Run</b>.</li>
+                <li>Klik tombol <b>Refresh</b> pada website ini setelah skrip selesai dijalankan.</li>
+              </ol>
+            </div>
+          </div>
+        )}
 
         {/* Directory Header Banner Card */}
         <section className="directory-banner">

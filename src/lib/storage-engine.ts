@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { supabase, isSupabaseConfigured, STORAGE_BUCKET } from './supabase';
 import { FolderItem, FileItem, FolderContentsResponse, BreadcrumbItem } from './types';
 
@@ -8,11 +9,13 @@ interface LocalDatabase {
   files: FileItem[];
 }
 
-const DATA_DIR = path.join(process.cwd(), 'data');
+// In serverless environments like Vercel, /var/task is read-only.
+// Use os.tmpdir() (/tmp) when running on Vercel for writable storage.
+const isVercel = Boolean(process.env.VERCEL);
+const DATA_DIR = isVercel ? path.join(os.tmpdir(), 'hanswy-data') : path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
-const UPLOADS_DIR = path.join(process.cwd(), 'public', 'uploads');
+const UPLOADS_DIR = isVercel ? path.join(os.tmpdir(), 'hanswy-uploads') : path.join(process.cwd(), 'public', 'uploads');
 
-// Seed default data matching screenshot reference if db is empty
 function getInitialSeedData(): LocalDatabase {
   const rootArceusId = 'arceus-folder-id';
   const rootDeltaId = 'delta-lite-folder-id';
@@ -58,84 +61,47 @@ function getInitialSeedData(): LocalDatabase {
     },
   ];
 
-  const files: FileItem[] = [
-    {
-      id: 'file-apk-01',
-      name: 'ZETSU ARCEUS LITE 01-2.742.1059.apk.apk',
-      folder_id: android10Id,
-      size: 108991283, // 103.94 MB
-      mime_type: 'application/vnd.android.package-archive',
-      storage_path: 'demo/arceus-lite-01.apk',
-      download_url: '/uploads/sample-package.apk',
-      created_at: '2026-10-14T14:32:49Z',
-      updated_at: '2026-10-14T14:32:49Z',
-    },
-    {
-      id: 'file-apk-02',
-      name: 'ZETSU ARCEUS LITE 02-2.742.1059.apk.apk',
-      folder_id: android10Id,
-      size: 108991283, // 103.94 MB
-      mime_type: 'application/vnd.android.package-archive',
-      storage_path: 'demo/arceus-lite-02.apk',
-      download_url: '/uploads/sample-package.apk',
-      created_at: '2026-10-14T14:32:49Z',
-      updated_at: '2026-10-14T14:32:49Z',
-    },
-    {
-      id: 'file-apk-03',
-      name: 'ZETSU ARCEUS LITE 03-2.742.1059.apk.apk',
-      folder_id: android10Id,
-      size: 108991283, // 103.94 MB
-      mime_type: 'application/vnd.android.package-archive',
-      storage_path: 'demo/arceus-lite-03.apk',
-      download_url: '/uploads/sample-package.apk',
-      created_at: '2026-10-14T14:32:49Z',
-      updated_at: '2026-10-14T14:32:49Z',
-    },
-    {
-      id: 'file-apk-04',
-      name: 'ZETSU ARCEUS LITE 04-2.742.1059.apk.apk',
-      folder_id: android10Id,
-      size: 108991283, // 103.94 MB
-      mime_type: 'application/vnd.android.package-archive',
-      storage_path: 'demo/arceus-lite-04.apk',
-      download_url: '/uploads/sample-package.apk',
-      created_at: '2026-10-14T14:33:12Z',
-      updated_at: '2026-10-14T14:33:12Z',
-    },
-  ];
-
+  const files: FileItem[] = [];
   return { folders, files };
 }
 
 function ensureLocalDirs() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-  if (!fs.existsSync(UPLOADS_DIR)) {
-    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (!fs.existsSync(UPLOADS_DIR)) {
+      fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+    }
+  } catch (err) {
+    console.warn('ensureLocalDirs error:', err);
   }
 }
 
 function readLocalDb(): LocalDatabase {
   ensureLocalDirs();
-  if (!fs.existsSync(DB_FILE)) {
-    const seed = getInitialSeedData();
-    fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), 'utf-8');
-    return seed;
-  }
   try {
+    if (!fs.existsSync(DB_FILE)) {
+      const seed = getInitialSeedData();
+      fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), 'utf-8');
+      return seed;
+    }
     const raw = fs.readFileSync(DB_FILE, 'utf-8');
     return JSON.parse(raw);
   } catch (err) {
-    console.error('Error reading local db:', err);
+    console.warn('Error reading local db, returning seed:', err);
     return getInitialSeedData();
   }
 }
 
 function writeLocalDb(data: LocalDatabase) {
   ensureLocalDirs();
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Failed to write local db:', err);
+    throw new Error(`Gagal menyimpan ke penyimpanan lokal: ${(err as Error).message}`);
+  }
 }
 
 // ----------------------------------------------------
@@ -157,9 +123,23 @@ export async function getFolderContents(
           .select('*')
           .eq('id', targetFolderId)
           .single();
-        if (!folderErr && folderData) {
-          currentFolder = folderData;
+
+        if (folderErr) {
+          if (folderErr.code === 'PGRST205' || folderErr.message?.includes('Could not find the table')) {
+            return {
+              currentFolder: null,
+              breadcrumbs: [{ id: null, name: 'Root' }],
+              folders: [],
+              files: [],
+              totalItems: 0,
+              isCloudStorage: true,
+              schemaMissing: true,
+              errorMessage: "Tabel 'folders' belum dibuat di Supabase. Silakan jalankan file supabase-schema.sql di Supabase SQL Editor.",
+            };
+          }
+          throw new Error(`Gagal memuat folder: ${folderErr.message}`);
         }
+        currentFolder = folderData;
       }
 
       // 2. Build breadcrumbs
@@ -190,10 +170,27 @@ export async function getFolderContents(
       } else {
         folderQuery.eq('parent_id', targetFolderId);
       }
-      const { data: foldersData } = await folderQuery;
+
+      const { data: foldersData, error: foldersErr } = await folderQuery;
+      if (foldersErr) {
+        if (foldersErr.code === 'PGRST205' || foldersErr.message?.includes('Could not find the table')) {
+          return {
+            currentFolder: null,
+            breadcrumbs: [{ id: null, name: 'Root' }],
+            folders: [],
+            files: [],
+            totalItems: 0,
+            isCloudStorage: true,
+            schemaMissing: true,
+            errorMessage: "Tabel 'folders' belum dibuat di Supabase. Silakan jalankan file supabase-schema.sql di Supabase SQL Editor.",
+          };
+        }
+        throw new Error(`Gagal memuat daftar subfolder: ${foldersErr.message}`);
+      }
+
       const folders: FolderItem[] = foldersData || [];
 
-      // Calculate item_count for each folder
+      // Calculate item_count for each subfolder
       for (const f of folders) {
         const { count: subFolderCount } = await supabase
           .from('folders')
@@ -208,20 +205,17 @@ export async function getFolderContents(
 
       // 4. Fetch files in current folder
       let files: FileItem[] = [];
+      const fileQuery = supabase.from('files').select('*').order('name');
       if (targetFolderId && targetFolderId !== 'root') {
-        const { data: filesData } = await supabase
-          .from('files')
-          .select('*')
-          .eq('folder_id', targetFolderId)
-          .order('name');
-        files = filesData || [];
+        fileQuery.eq('folder_id', targetFolderId);
       } else {
-        // Root files if any
-        const { data: filesData } = await supabase
-          .from('files')
-          .select('*')
-          .is('folder_id', null)
-          .order('name');
+        fileQuery.is('folder_id', null);
+      }
+
+      const { data: filesData, error: filesErr } = await fileQuery;
+      if (filesErr) {
+        console.warn('Gagal memuat files:', filesErr.message);
+      } else {
         files = filesData || [];
       }
 
@@ -234,13 +228,15 @@ export async function getFolderContents(
         files,
         totalItems,
         isCloudStorage: true,
+        schemaMissing: false,
       };
     } catch (err) {
-      console.warn('Supabase query failed, falling back to local store:', err);
+      console.error('Supabase query error:', err);
+      throw err;
     }
   }
 
-  // Fallback to Local Store
+  // Fallback to Local Store when Supabase is not configured
   const db = readLocalDb();
   const actualFolderId = !targetFolderId || targetFolderId === 'root' ? null : targetFolderId;
 
@@ -248,7 +244,6 @@ export async function getFolderContents(
     ? db.folders.find((f) => f.id === actualFolderId) || null
     : null;
 
-  // Build breadcrumbs
   const breadcrumbs: BreadcrumbItem[] = [{ id: null, name: 'Root' }];
   if (currentFolder) {
     const trail: BreadcrumbItem[] = [{ id: currentFolder.id, name: currentFolder.name }];
@@ -265,7 +260,6 @@ export async function getFolderContents(
     breadcrumbs.push(...trail);
   }
 
-  // Folders in current level
   const folders = db.folders
     .filter((f) => (actualFolderId ? f.parent_id === actualFolderId : f.parent_id === null))
     .map((f) => {
@@ -277,7 +271,6 @@ export async function getFolderContents(
       };
     });
 
-  // Files in current level
   const files = db.files.filter((file) =>
     actualFolderId ? file.folder_id === actualFolderId : !file.folder_id
   );
@@ -303,23 +296,23 @@ export async function createFolder(
   const isCloud = isSupabaseConfigured && supabase !== null;
 
   if (isCloud && supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('folders')
-        .insert({
-          name: trimmedName,
-          parent_id: actualParentId,
-        })
-        .select()
-        .single();
+    const { data, error } = await supabase
+      .from('folders')
+      .insert({
+        name: trimmedName,
+        parent_id: actualParentId,
+      })
+      .select()
+      .single();
 
-      if (!error && data) {
-        return data;
+    if (error) {
+      if (error.code === 'PGRST205' || error.message?.includes('Could not find the table')) {
+        throw new Error("Tabel 'folders' belum dibuat di Supabase. Silakan jalankan skrip supabase-schema.sql di SQL Editor Supabase terlebih dahulu.");
       }
-      console.warn('Supabase createFolder warning:', error?.message);
-    } catch (err) {
-      console.warn('Supabase createFolder error:', err);
+      throw new Error(`Gagal membuat folder di Supabase: ${error.message}`);
     }
+
+    return data;
   }
 
   // Local store
@@ -344,21 +337,17 @@ export async function renameFolder(folderId: string, newName: string): Promise<F
 
   const isCloud = isSupabaseConfigured && supabase !== null;
   if (isCloud && supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('folders')
-        .update({ name: trimmedName, updated_at: new Date().toISOString() })
-        .eq('id', folderId)
-        .select()
-        .single();
+    const { data, error } = await supabase
+      .from('folders')
+      .update({ name: trimmedName, updated_at: new Date().toISOString() })
+      .eq('id', folderId)
+      .select()
+      .single();
 
-      if (!error && data) {
-        return data;
-      }
-      console.warn('Supabase renameFolder warning:', error?.message);
-    } catch (err) {
-      console.warn('Supabase renameFolder error:', err);
+    if (error) {
+      throw new Error(`Gagal mengubah nama folder di Supabase: ${error.message}`);
     }
+    return data;
   }
 
   const db = readLocalDb();
@@ -375,26 +364,30 @@ export async function deleteFolder(folderId: string): Promise<void> {
   const isCloud = isSupabaseConfigured && supabase !== null;
 
   if (isCloud && supabase) {
-    try {
-      // Delete files inside folder from Supabase Storage first
-      const { data: filesToDelete } = await supabase
-        .from('files')
-        .select('storage_path')
-        .eq('folder_id', folderId);
+    // 1. Delete files in folder from Supabase Storage
+    const { data: filesToDelete, error: fetchFilesErr } = await supabase
+      .from('files')
+      .select('storage_path')
+      .eq('folder_id', folderId);
 
-      if (filesToDelete && filesToDelete.length > 0) {
-        const paths = filesToDelete.map((f) => f.storage_path);
-        await supabase.storage.from(STORAGE_BUCKET).remove(paths);
-      }
-
-      const { error } = await supabase.from('folders').delete().eq('id', folderId);
-      if (!error) {
-        return;
-      }
-      console.warn('Supabase deleteFolder warning:', error?.message);
-    } catch (err) {
-      console.warn('Supabase deleteFolder error:', err);
+    if (fetchFilesErr && fetchFilesErr.code !== 'PGRST205') {
+      console.warn('Warning fetching files to delete:', fetchFilesErr.message);
     }
+
+    if (filesToDelete && filesToDelete.length > 0) {
+      const paths = filesToDelete.map((f) => f.storage_path);
+      await supabase.storage.from(STORAGE_BUCKET).remove(paths);
+    }
+
+    // 2. Delete folder from Supabase Database
+    const { error: delErr } = await supabase.from('folders').delete().eq('id', folderId);
+    if (delErr) {
+      if (delErr.code === 'PGRST205' || delErr.message?.includes('Could not find the table')) {
+        throw new Error("Tabel 'folders' belum dibuat di Supabase. Silakan jalankan skrip supabase-schema.sql di SQL Editor Supabase terlebih dahulu.");
+      }
+      throw new Error(`Gagal menghapus folder dari Supabase: ${delErr.message}`);
+    }
+    return;
   }
 
   // Local recursive delete
@@ -412,7 +405,6 @@ export async function deleteFolder(folderId: string): Promise<void> {
     }
   }
 
-  // Remove files
   db.files = db.files.filter((file) => !foldersToRemove.has(file.folder_id));
   db.folders = db.folders.filter((folder) => !foldersToRemove.has(folder.id));
 
@@ -434,44 +426,44 @@ export async function uploadFileRecord(params: {
   const uniqueStorageKey = `${actualFolderId || 'root'}/${Date.now()}_${sanitizedFileName}`;
 
   if (isCloud && supabase) {
-    try {
-      // 1. Upload to Supabase Storage
-      const { error: uploadError } = await supabase.storage
-        .from(STORAGE_BUCKET)
-        .upload(uniqueStorageKey, buffer, {
-          contentType: mimeType,
-          upsert: true,
-        });
+    // 1. Upload to Supabase Storage
+    const { error: uploadError } = await supabase.storage
+      .from(STORAGE_BUCKET)
+      .upload(uniqueStorageKey, buffer, {
+        contentType: mimeType,
+        upsert: true,
+      });
 
-      if (!uploadError) {
-        // 2. Get public download URL
-        const { data: urlData } = supabase.storage
-          .from(STORAGE_BUCKET)
-          .getPublicUrl(uniqueStorageKey);
-
-        const downloadUrl = urlData.publicUrl;
-
-        // 3. Insert record into files table
-        const { data: fileRecord, error: dbError } = await supabase
-          .from('files')
-          .insert({
-            name,
-            folder_id: actualFolderId,
-            size,
-            mime_type: mimeType,
-            storage_path: uniqueStorageKey,
-            download_url: downloadUrl,
-          })
-          .select()
-          .single();
-
-        if (!dbError && fileRecord) {
-          return fileRecord;
-        }
-      }
-    } catch (err) {
-      console.warn('Supabase uploadFileRecord error:', err);
+    if (uploadError) {
+      throw new Error(`Upload Supabase Storage gagal: ${uploadError.message}. Pastikan bucket '${STORAGE_BUCKET}' sudah dibuat di Supabase.`);
     }
+
+    // 2. Get public download URL
+    const { data: urlData } = supabase.storage
+      .from(STORAGE_BUCKET)
+      .getPublicUrl(uniqueStorageKey);
+
+    const downloadUrl = urlData.publicUrl;
+
+    // 3. Insert record into files table
+    const { data: fileRecord, error: dbError } = await supabase
+      .from('files')
+      .insert({
+        name,
+        folder_id: actualFolderId,
+        size,
+        mime_type: mimeType,
+        storage_path: uniqueStorageKey,
+        download_url: downloadUrl,
+      })
+      .select()
+      .single();
+
+    if (dbError) {
+      throw new Error(`Gagal menyimpan metadata file ke database Supabase: ${dbError.message}`);
+    }
+
+    return fileRecord;
   }
 
   // Local storage fallback
@@ -504,20 +496,17 @@ export async function renameFile(fileId: string, newName: string): Promise<FileI
 
   const isCloud = isSupabaseConfigured && supabase !== null;
   if (isCloud && supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('files')
-        .update({ name: trimmedName, updated_at: new Date().toISOString() })
-        .eq('id', fileId)
-        .select()
-        .single();
+    const { data, error } = await supabase
+      .from('files')
+      .update({ name: trimmedName, updated_at: new Date().toISOString() })
+      .eq('id', fileId)
+      .select()
+      .single();
 
-      if (!error && data) {
-        return data;
-      }
-    } catch (err) {
-      console.warn('Supabase renameFile error:', err);
+    if (error) {
+      throw new Error(`Gagal mengubah nama file di Supabase: ${error.message}`);
     }
+    return data;
   }
 
   const db = readLocalDb();
@@ -534,24 +523,21 @@ export async function deleteFile(fileId: string): Promise<void> {
   const isCloud = isSupabaseConfigured && supabase !== null;
 
   if (isCloud && supabase) {
-    try {
-      const { data: file } = await supabase
-        .from('files')
-        .select('storage_path')
-        .eq('id', fileId)
-        .single();
+    const { data: file } = await supabase
+      .from('files')
+      .select('storage_path')
+      .eq('id', fileId)
+      .single();
 
-      if (file?.storage_path) {
-        await supabase.storage.from(STORAGE_BUCKET).remove([file.storage_path]);
-      }
-
-      const { error } = await supabase.from('files').delete().eq('id', fileId);
-      if (!error) {
-        return;
-      }
-    } catch (err) {
-      console.warn('Supabase deleteFile error:', err);
+    if (file?.storage_path) {
+      await supabase.storage.from(STORAGE_BUCKET).remove([file.storage_path]);
     }
+
+    const { error } = await supabase.from('files').delete().eq('id', fileId);
+    if (error) {
+      throw new Error(`Gagal menghapus file dari Supabase: ${error.message}`);
+    }
+    return;
   }
 
   const db = readLocalDb();
@@ -569,4 +555,3 @@ export async function deleteFile(fileId: string): Promise<void> {
     writeLocalDb(db);
   }
 }
-

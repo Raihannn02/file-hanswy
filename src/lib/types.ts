@@ -31,6 +31,8 @@ export interface FolderContentsResponse {
   files: FileItem[];
   totalItems: number;
   isCloudStorage: boolean;
+  schemaMissing?: boolean;
+  errorMessage?: string;
 }
 
 export interface ApiResponse<T = unknown> {

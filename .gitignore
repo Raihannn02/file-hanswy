@@ -42,3 +42,6 @@ Thumbs.db
 
 # Local temporary data
 /data/db.json
+
+.vercel
+.env*
