@@ -33,6 +33,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { FolderItem, FileItem, BreadcrumbItem } from '@/lib/types';
+import { supabaseBrowser, isBrowserSupabaseReady, BROWSER_STORAGE_BUCKET } from '@/lib/supabase-browser';
 
 interface UserInfo {
   name: string;
@@ -65,7 +66,7 @@ async function safeParseJson(res: Response): Promise<{ success: boolean; [key: s
     // Response was not JSON (e.g. Vercel size limit HTML error page)
     const statusText = res.statusText || `HTTP ${res.status}`;
     if (res.status === 413) {
-      return { success: false, error: 'Ukuran file terlalu besar. Maksimal 4.5 MB per file di Vercel Hobby Plan.' };
+      return { success: false, error: 'Ukuran file terlalu besar. Coba gunakan file yang lebih kecil.' };
     }
     return { success: false, error: `Server error (${statusText}): ${text.substring(0, 120)}` };
   }
@@ -330,59 +331,127 @@ export default function FileHansWYApp() {
   const uploadSingleFile = async (item: UploadQueueItem): Promise<void> => {
     // Mark as uploading
     setUploadQueue((prev) =>
-      prev.map((i) => (i.id === item.id ? { ...i, status: 'uploading', progress: 10 } : i))
+      prev.map((i) => (i.id === item.id ? { ...i, status: 'uploading', progress: 5 } : i))
     );
 
-    const formData = new FormData();
-    formData.append('file', item.file);
-    if (currentFolderId) {
-      formData.append('folderId', currentFolderId);
-    }
+    const setProgress = (p: number) => {
+      setUploadQueue((prev) =>
+        prev.map((i) => (i.id === item.id && i.status === 'uploading' ? { ...i, progress: p } : i))
+      );
+    };
 
-    try {
-      // Simulate progress while uploading (XHR not available easily in fetch)
-      const progressInterval = setInterval(() => {
-        setUploadQueue((prev) =>
-          prev.map((i) =>
-            i.id === item.id && i.status === 'uploading' && i.progress < 85
-              ? { ...i, progress: i.progress + 15 }
-              : i
-          )
-        );
-      }, 400);
-
-      const res = await fetch('/api/files', {
-        method: 'POST',
-        body: formData,
-      });
-
-      clearInterval(progressInterval);
-
-      const data = await safeParseJson(res);
-
-      if (data.success) {
-        setUploadQueue((prev) =>
-          prev.map((i) =>
-            i.id === item.id ? { ...i, status: 'success', progress: 100 } : i
-          )
-        );
-      } else {
-        setUploadQueue((prev) =>
-          prev.map((i) =>
-            i.id === item.id
-              ? { ...i, status: 'error', progress: 0, errorMessage: (data.error as string) || 'Upload gagal' }
-              : i
-          )
-        );
-      }
-    } catch (err) {
+    const setError = (msg: string) => {
       setUploadQueue((prev) =>
         prev.map((i) =>
-          i.id === item.id
-            ? { ...i, status: 'error', progress: 0, errorMessage: (err as Error).message }
-            : i
+          i.id === item.id ? { ...i, status: 'error', progress: 0, errorMessage: msg } : i
         )
       );
+    };
+
+    const setSuccess = () => {
+      setUploadQueue((prev) =>
+        prev.map((i) => (i.id === item.id ? { ...i, status: 'success', progress: 100 } : i))
+      );
+    };
+
+    try {
+      // ================================================================
+      // STRATEGI: Upload langsung dari browser ke Supabase Storage
+      // Melewati Vercel API sepenuhnya → tidak ada batas 4.5MB Vercel
+      // Supabase Free Tier: 50MB per file, 1GB total storage
+      // ================================================================
+
+      if (isBrowserSupabaseReady && supabaseBrowser) {
+        // -- JALUR 1: Direct Supabase Upload (untuk cloud mode) --
+        const sanitizedName = item.file.name.replace(/[^a-zA-Z0-9._\-\s]/g, '_');
+        const folderKey = currentFolderId || 'root';
+        const storagePath = `${folderKey}/${Date.now()}_${sanitizedName}`;
+        const mimeType = item.file.type || 'application/octet-stream';
+
+        setProgress(20);
+
+        // Upload file langsung ke Supabase Storage dari browser
+        const { error: storageError } = await supabaseBrowser.storage
+          .from(BROWSER_STORAGE_BUCKET)
+          .upload(storagePath, item.file, {
+            contentType: mimeType,
+            upsert: true,
+          });
+
+        if (storageError) {
+          // Cek apakah error karena bucket tidak ada atau akses ditolak
+          if (storageError.message?.includes('Bucket not found') || storageError.message?.includes('not found')) {
+            setError(`Bucket '${BROWSER_STORAGE_BUCKET}' tidak ditemukan di Supabase. Buat bucket terlebih dahulu di Supabase Storage.`);
+          } else if (storageError.message?.includes('security') || storageError.message?.includes('policy') || storageError.statusCode === '403') {
+            setError(`Akses ditolak ke Supabase Storage. Jalankan script fix-rls.sql di Supabase SQL Editor untuk mengizinkan upload.`);
+          } else {
+            setError(`Upload ke Supabase Storage gagal: ${storageError.message}`);
+          }
+          return;
+        }
+
+        setProgress(75);
+
+        // Dapatkan public URL
+        const { data: urlData } = supabaseBrowser.storage
+          .from(BROWSER_STORAGE_BUCKET)
+          .getPublicUrl(storagePath);
+
+        const downloadUrl = urlData.publicUrl;
+
+        setProgress(85);
+
+        // Simpan metadata ke database via API (hanya JSON kecil, jauh di bawah limit Vercel)
+        const metaRes = await fetch('/api/files/metadata', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: item.file.name,
+            folderId: currentFolderId,
+            size: item.file.size,
+            mimeType,
+            storagePath,
+            downloadUrl,
+          }),
+        });
+
+        const metaData = await safeParseJson(metaRes);
+        if (metaData.success) {
+          setSuccess();
+        } else {
+          setError((metaData.error as string) || 'Gagal menyimpan metadata file');
+        }
+
+      } else {
+        // -- JALUR 2: Fallback ke API Route (lokal / tanpa Supabase) --
+        // Hanya bisa upload file kecil (< 4.5MB) karena melalui Vercel API
+        const formData = new FormData();
+        formData.append('file', item.file);
+        if (currentFolderId) formData.append('folderId', currentFolderId);
+
+        setProgress(20);
+        const progressInterval = setInterval(() => {
+          setUploadQueue((prev) =>
+            prev.map((i) =>
+              i.id === item.id && i.status === 'uploading' && i.progress < 80
+                ? { ...i, progress: i.progress + 10 }
+                : i
+            )
+          );
+        }, 500);
+
+        const res = await fetch('/api/files', { method: 'POST', body: formData });
+        clearInterval(progressInterval);
+        const data = await safeParseJson(res);
+
+        if (data.success) {
+          setSuccess();
+        } else {
+          setError((data.error as string) || 'Upload gagal');
+        }
+      }
+    } catch (err) {
+      setError((err as Error).message || 'Terjadi kesalahan saat upload');
     }
   };
 
