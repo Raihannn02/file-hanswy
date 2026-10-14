@@ -367,7 +367,7 @@ export async function deleteFolder(folderId: string): Promise<void> {
     // 1. Delete files in folder from Supabase Storage
     const { data: filesToDelete, error: fetchFilesErr } = await supabase
       .from('files')
-      .select('storage_path')
+      .select('storage_path, download_url')
       .eq('folder_id', folderId);
 
     if (fetchFilesErr && fetchFilesErr.code !== 'PGRST205') {
@@ -375,8 +375,21 @@ export async function deleteFolder(folderId: string): Promise<void> {
     }
 
     if (filesToDelete && filesToDelete.length > 0) {
-      const paths = filesToDelete.map((f) => f.storage_path);
-      await supabase.storage.from(STORAGE_BUCKET).remove(paths);
+      const paths: string[] = [];
+      for (const f of filesToDelete) {
+        if (f.storage_path) paths.push(f.storage_path);
+        if (f.download_url && f.download_url.startsWith('chunked:')) {
+          const parts = f.download_url.split(':');
+          const count = parseInt(parts[1], 10);
+          const basePath = parts.slice(2).join(':');
+          for (let i = 0; i < count; i++) {
+            paths.push(`${basePath}_part${i}`);
+          }
+        }
+      }
+      if (paths.length > 0) {
+        await supabase.storage.from(STORAGE_BUCKET).remove(paths);
+      }
     }
 
     // 2. Delete folder from Supabase Database
@@ -525,12 +538,21 @@ export async function deleteFile(fileId: string): Promise<void> {
   if (isCloud && supabase) {
     const { data: file } = await supabase
       .from('files')
-      .select('storage_path')
+      .select('storage_path, download_url')
       .eq('id', fileId)
       .single();
 
     if (file?.storage_path) {
-      await supabase.storage.from(STORAGE_BUCKET).remove([file.storage_path]);
+      const pathsToDelete = [file.storage_path];
+      if (file.download_url && file.download_url.startsWith('chunked:')) {
+        const parts = file.download_url.split(':');
+        const count = parseInt(parts[1], 10);
+        const basePath = parts.slice(2).join(':');
+        for (let i = 0; i < count; i++) {
+          pathsToDelete.push(`${basePath}_part${i}`);
+        }
+      }
+      await supabase.storage.from(STORAGE_BUCKET).remove(pathsToDelete);
     }
 
     const { error } = await supabase.from('files').delete().eq('id', fileId);

@@ -368,63 +368,125 @@ export default function FileHansWYApp() {
         const storagePath = `${folderKey}/${Date.now()}_${sanitizedName}`;
         const mimeType = item.file.type || 'application/octet-stream';
 
-        setProgress(20);
+        // CHUNKING LOGIC:
+        // Supabase Free Tier memiliki batas 50 MB per file.
+        // Jika file berukuran > 35 MB, kita otomatis membagi (chunk) menjadi
+        // bagian 35 MB agar file 100 MB, 200 MB, dsb. dapat terupload dengan sukses!
+        const CHUNK_SIZE = 35 * 1024 * 1024; // 35 MB per part
 
-        // Upload file langsung ke Supabase Storage dari browser
-        const { error: storageError } = await supabaseBrowser.storage
-          .from(BROWSER_STORAGE_BUCKET)
-          .upload(storagePath, item.file, {
-            contentType: mimeType,
-            upsert: true,
+        if (item.file.size > CHUNK_SIZE) {
+          const totalChunks = Math.ceil(item.file.size / CHUNK_SIZE);
+
+          for (let i = 0; i < totalChunks; i++) {
+            const start = i * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, item.file.size);
+            const chunk = item.file.slice(start, end, mimeType);
+            const chunkPath = `${storagePath}_part${i}`;
+
+            const baseProgress = Math.round((i / totalChunks) * 80);
+            setProgress(Math.max(5, baseProgress));
+
+            const { error: chunkErr } = await supabaseBrowser.storage
+              .from(BROWSER_STORAGE_BUCKET)
+              .upload(chunkPath, chunk, {
+                contentType: mimeType,
+                upsert: true,
+              });
+
+            if (chunkErr) {
+              if (chunkErr.message?.includes('Bucket not found')) {
+                setError(`Bucket '${BROWSER_STORAGE_BUCKET}' tidak ditemukan di Supabase.`);
+              } else if (chunkErr.message?.includes('exceeded the maximum') || chunkErr.statusCode === '413') {
+                setError(`Gagal: Bagian ${i + 1} melebihi batas. Jalankan fix-bucket-sizelimit.sql di Supabase.`);
+              } else {
+                setError(`Gagal mengunggah bagian ${i + 1}/${totalChunks}: ${chunkErr.message}`);
+              }
+              return;
+            }
+          }
+
+          setProgress(85);
+
+          const downloadUrl = `chunked:${totalChunks}:${storagePath}`;
+
+          // Simpan metadata ke API (hanya JSON kecil)
+          const metaRes = await fetch('/api/files/metadata', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: item.file.name,
+              folderId: currentFolderId,
+              size: item.file.size,
+              mimeType,
+              storagePath,
+              downloadUrl,
+            }),
           });
 
-        if (storageError) {
-          // Cek apakah error karena bucket tidak ada atau akses ditolak
-          if (storageError.message?.includes('Bucket not found') || storageError.message?.includes('not found')) {
-            setError(`Bucket '${BROWSER_STORAGE_BUCKET}' tidak ditemukan di Supabase. Buat bucket terlebih dahulu di Supabase Storage.`);
-          } else if (storageError.message?.includes('security') || storageError.message?.includes('policy') || storageError.statusCode === '403') {
-            setError(`Akses ditolak ke Supabase Storage. Jalankan script fix-rls.sql di Supabase SQL Editor untuk mengizinkan upload.`);
+          const metaData = await safeParseJson(metaRes);
+          if (metaData.success) {
+            setSuccess();
           } else {
-            setError(`Upload ke Supabase Storage gagal: ${storageError.message}`);
+            setError((metaData.error as string) || 'Gagal menyimpan metadata file');
           }
-          return;
-        }
 
-        setProgress(75);
-
-        // Dapatkan public URL
-        const { data: urlData } = supabaseBrowser.storage
-          .from(BROWSER_STORAGE_BUCKET)
-          .getPublicUrl(storagePath);
-
-        const downloadUrl = urlData.publicUrl;
-
-        setProgress(85);
-
-        // Simpan metadata ke database via API (hanya JSON kecil, jauh di bawah limit Vercel)
-        const metaRes = await fetch('/api/files/metadata', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: item.file.name,
-            folderId: currentFolderId,
-            size: item.file.size,
-            mimeType,
-            storagePath,
-            downloadUrl,
-          }),
-        });
-
-        const metaData = await safeParseJson(metaRes);
-        if (metaData.success) {
-          setSuccess();
         } else {
-          setError((metaData.error as string) || 'Gagal menyimpan metadata file');
+          // File normal (<= 35 MB): Single direct upload
+          setProgress(20);
+
+          const { error: storageError } = await supabaseBrowser.storage
+            .from(BROWSER_STORAGE_BUCKET)
+            .upload(storagePath, item.file, {
+              contentType: mimeType,
+              upsert: true,
+            });
+
+          if (storageError) {
+            if (storageError.message?.includes('Bucket not found') || storageError.message?.includes('not found')) {
+              setError(`Bucket '${BROWSER_STORAGE_BUCKET}' tidak ditemukan di Supabase.`);
+            } else if (storageError.message?.includes('security') || storageError.message?.includes('policy') || storageError.statusCode === '403') {
+              setError(`Akses ditolak ke Supabase Storage. Jalankan script fix-rls-storage.sql di SQL Editor.`);
+            } else if (storageError.message?.includes('exceeded the maximum') || storageError.statusCode === '413') {
+              setError(`Ukuran file melebihi batas bucket. Jalankan fix-bucket-sizelimit.sql di Supabase.`);
+            } else {
+              setError(`Upload ke Supabase Storage gagal: ${storageError.message}`);
+            }
+            return;
+          }
+
+          setProgress(75);
+
+          const { data: urlData } = supabaseBrowser.storage
+            .from(BROWSER_STORAGE_BUCKET)
+            .getPublicUrl(storagePath);
+
+          const downloadUrl = urlData.publicUrl;
+
+          setProgress(85);
+
+          const metaRes = await fetch('/api/files/metadata', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: item.file.name,
+              folderId: currentFolderId,
+              size: item.file.size,
+              mimeType,
+              storagePath,
+              downloadUrl,
+            }),
+          });
+
+          const metaData = await safeParseJson(metaRes);
+          if (metaData.success) {
+            setSuccess();
+          } else {
+            setError((metaData.error as string) || 'Gagal menyimpan metadata file');
+          }
         }
 
       } else {
         // -- JALUR 2: Fallback ke API Route (lokal / tanpa Supabase) --
-        // Hanya bisa upload file kecil (< 4.5MB) karena melalui Vercel API
         const formData = new FormData();
         formData.append('file', item.file);
         if (currentFolderId) formData.append('folderId', currentFolderId);
@@ -567,12 +629,96 @@ export default function FileHansWYApp() {
 
   // Copy Direct Link
   const copyDirectLink = (file: FileItem) => {
-    const fullUrl = file.download_url.startsWith('http')
-      ? file.download_url
-      : `${window.location.origin}${file.download_url}`;
+    let fullUrl = '';
+    if (file.download_url.startsWith('chunked:')) {
+      fullUrl = `${window.location.origin}/?download=${file.id}`;
+    } else {
+      fullUrl = file.download_url.startsWith('http')
+        ? file.download_url
+        : `${window.location.origin}${file.download_url}`;
+    }
     navigator.clipboard.writeText(fullUrl);
     showToast('Tautan langsung berhasil disalin! 📋', 'success');
   };
+
+  // State & Handler for File Downloads (both direct and chunked)
+  const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
+
+  const handleDownloadFile = async (file: FileItem) => {
+    if (!file.download_url.startsWith('chunked:')) {
+      // Normal direct download
+      const a = document.createElement('a');
+      a.href = file.download_url;
+      a.download = file.name;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      return;
+    }
+
+    // Chunked download: fetch each part and stitch in-browser
+    const parts = file.download_url.split(':');
+    const totalChunks = parseInt(parts[1], 10);
+    const basePath = parts.slice(2).join(':');
+
+    if (!supabaseBrowser) {
+      showToast('Client Supabase belum siap', 'error');
+      return;
+    }
+
+    setDownloadingFileId(file.id);
+    showToast(`Mempersiapkan unduhan "${file.name}" (0/${totalChunks} bagian)...`, 'info');
+
+    try {
+      const chunkBlobs: Blob[] = [];
+      for (let i = 0; i < totalChunks; i++) {
+        const chunkPath = `${basePath}_part${i}`;
+        const { data: urlData } = supabaseBrowser.storage
+          .from(BROWSER_STORAGE_BUCKET)
+          .getPublicUrl(chunkPath);
+
+        const res = await fetch(urlData.publicUrl);
+        if (!res.ok) {
+          throw new Error(`Gagal mengunduh bagian ${i + 1}/${totalChunks} (HTTP ${res.status})`);
+        }
+        const blob = await res.blob();
+        chunkBlobs.push(blob);
+        showToast(`Mengunduh "${file.name}" (${i + 1}/${totalChunks} bagian)...`, 'info');
+      }
+
+      const finalBlob = new Blob(chunkBlobs, { type: file.mime_type || 'application/octet-stream' });
+      const blobUrl = URL.createObjectURL(finalBlob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = file.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
+      showToast(`File "${file.name}" berhasil diunduh! ✓`, 'success');
+    } catch (err) {
+      showToast(`Gagal mengunduh: ${(err as Error).message}`, 'error');
+    } finally {
+      setDownloadingFileId(null);
+    }
+  };
+
+  // Auto-download when URL has ?download=fileId
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const downloadId = params.get('download');
+    if (downloadId && files.length > 0) {
+      const target = files.find((f) => f.id === downloadId);
+      if (target) {
+        handleDownloadFile(target);
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, '', newUrl);
+      }
+    }
+  }, [files]);
 
   // Format File Size
   const formatFileSize = (bytes: number) => {
@@ -941,18 +1087,21 @@ export default function FileHansWYApp() {
                     <button className="btn-icon" title="Salin tautan unduhan langsung" onClick={() => copyDirectLink(file)}>
                       <LinkIcon size={16} />
                     </button>
-                    <a
-                      href={file.download_url}
-                      download={file.name}
+                    <button
+                      type="button"
                       className="btn-download"
-                      style={{ textDecoration: 'none' }}
                       title="Unduh file ini"
-                      target="_blank"
-                      rel="noopener noreferrer"
+                      onClick={() => handleDownloadFile(file)}
+                      disabled={downloadingFileId === file.id}
+                      style={{ cursor: downloadingFileId === file.id ? 'wait' : 'pointer' }}
                     >
-                      <Download size={16} strokeWidth={2.8} />
-                      Download
-                    </a>
+                      {downloadingFileId === file.id ? (
+                        <RotateCw size={16} style={{ animation: 'spin 1s linear infinite' }} />
+                      ) : (
+                        <Download size={16} strokeWidth={2.8} />
+                      )}
+                      {downloadingFileId === file.id ? 'Mengunduh...' : 'Download'}
+                    </button>
                   </div>
                 </div>
               );
