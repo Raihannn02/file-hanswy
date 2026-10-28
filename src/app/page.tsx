@@ -949,9 +949,9 @@ export default function HansWYFileArchiveApp() {
             <div className="changelog-info">
               <div className="changelog-meta">
                 <span className="changelog-tag">CHANGELOG</span>
-                <span className="changelog-date">29 Oct 2026 • 01:00 WIB</span>
+                <span className="changelog-date">29 Oct 2026 • 01:30 WIB</span>
               </div>
-              <span className="changelog-title">VERSION 2.4 - THEME & LOCALIZATION UPDATE</span>
+              <span className="changelog-title">VERSION 2.5 - ADMIN LOGOUT FIX & REFINEMENTS</span>
             </div>
           </div>
 
@@ -1322,6 +1322,15 @@ export default function HansWYFileArchiveApp() {
 
             <div className="modal-text-body" style={{ maxHeight: '340px', overflowY: 'auto' }}>
               <div style={{ borderLeft: '2px solid var(--accent-cyan)', paddingLeft: '12px', marginBottom: '14px' }}>
+                <b style={{ color: 'var(--text-primary)' }}>29 Oct 2026 - 01:30 WIB (v2.5)</b>
+                <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
+                  • <b>Admin Logout Fix</b>: Resolved click dismissal conflict on the admin menu and reinforced secure session cookie deletion.
+                  <br />• <b>Session Sync</b>: Instant guest-mode UI synchronization and directory permissions update upon logging out.
+                  <br />• <b>UI & Performance</b>: Smoother dropdown interactions and clean error handling.
+                </p>
+              </div>
+
+              <div style={{ borderLeft: '2px solid var(--border-card)', paddingLeft: '12px', marginBottom: '14px' }}>
                 <b style={{ color: 'var(--text-primary)' }}>29 Oct 2026 - 01:00 WIB (v2.4)</b>
                 <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
                   • Complete English localization across all pages, controls, and dialogs.
