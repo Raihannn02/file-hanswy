@@ -32,7 +32,6 @@ import {
   Heart,
   MessageSquare,
   Copy,
-  QrCode,
 } from 'lucide-react';
 import { FolderItem, FileItem, BreadcrumbItem } from '@/lib/types';
 import { isBrowserGitHubReady, uploadFileToGitHubBrowser } from '@/lib/github-browser';
@@ -67,7 +66,7 @@ async function safeParseJson(res: Response): Promise<{ success: boolean; [key: s
   } catch {
     const statusText = res.statusText || `HTTP ${res.status}`;
     if (res.status === 413) {
-      return { success: false, error: 'Ukuran file terlalu besar. Coba gunakan file yang lebih kecil.' };
+      return { success: false, error: 'File size exceeds maximum upload limit. Please try a smaller file.' };
     }
     return { success: false, error: `Server error (${statusText}): ${text.substring(0, 120)}` };
   }
@@ -86,7 +85,7 @@ export default function HansWYFileArchiveApp() {
   const [schemaMissing, setSchemaMissing] = useState<boolean>(false);
   const [schemaErrorMessage, setSchemaErrorMessage] = useState<string>('');
 
-  // Cosmic Cyan Theme State (Toggleable on/off)
+  // Dual Theme State: Cosmic Cyan vs Themes White
   const [cosmicThemeActive, setCosmicThemeActive] = useState<boolean>(true);
 
   // Search filtering
@@ -144,16 +143,16 @@ export default function HansWYFileArchiveApp() {
     setToasts((prev) => [...prev, { id, text, type }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 5000);
+    }, 4500);
   };
 
-  // Initialize theme from localStorage
+  // Initialize theme from localStorage (Cosmic Cyan vs White)
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const savedTheme = localStorage.getItem('hanswy_cosmic_theme');
-      if (savedTheme === 'false') {
+      const savedTheme = localStorage.getItem('hanswy_theme_mode');
+      if (savedTheme === 'white') {
         setCosmicThemeActive(false);
-        document.documentElement.setAttribute('data-theme', 'minimal');
+        document.documentElement.setAttribute('data-theme', 'white');
       } else {
         setCosmicThemeActive(true);
         document.documentElement.setAttribute('data-theme', 'cosmic');
@@ -161,18 +160,19 @@ export default function HansWYFileArchiveApp() {
     }
   }, []);
 
-  // Toggle Theme Function
+  // Toggle Theme Function: Themes cosmic cyan on & Themes white on
   const toggleTheme = () => {
     const nextState = !cosmicThemeActive;
     setCosmicThemeActive(nextState);
     if (typeof window !== 'undefined') {
-      localStorage.setItem('hanswy_cosmic_theme', String(nextState));
-      document.documentElement.setAttribute('data-theme', nextState ? 'cosmic' : 'minimal');
+      const themeName = nextState ? 'cosmic' : 'white';
+      localStorage.setItem('hanswy_theme_mode', themeName);
+      document.documentElement.setAttribute('data-theme', themeName);
     }
     if (nextState) {
-      showToast('✨ Tema HansWY Cosmic Cyan berhasil diaktifkan', 'info');
+      showToast('Themes cosmic cyan on', 'info');
     } else {
-      showToast('🌙 Mode Gelap Minimalis berhasil diaktifkan', 'info');
+      showToast('Themes white on', 'info');
     }
   };
 
@@ -226,10 +226,10 @@ export default function HansWYFileArchiveApp() {
             setSchemaErrorMessage(d.errorMessage);
           }
         } else {
-          showToast((result.error as string) || 'Gagal memuat isi direktori', 'error');
+          showToast((result.error as string) || 'Failed to load directory contents', 'error');
         }
       } catch (err) {
-        showToast((err as Error).message || 'Terjadi kesalahan jaringan', 'error');
+        showToast((err as Error).message || 'Network error encountered', 'error');
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -285,12 +285,12 @@ export default function HansWYFileArchiveApp() {
         setUser(data.user as UserInfo);
         setShowLoginModal(false);
         setAdminPasswordInput('');
-        showToast('Login berhasil sebagai HansWY (Admin) ✓', 'success');
+        showToast('Admin login successful ✓', 'success');
       } else {
-        setAuthError((data.error as string) || 'Password salah');
+        setAuthError((data.error as string) || 'Incorrect administrator password');
       }
     } catch {
-      setAuthError('Gagal menghubungkan ke server');
+      setAuthError('Failed to connect to authentication server');
     }
   };
 
@@ -300,7 +300,7 @@ export default function HansWYFileArchiveApp() {
       await fetch('/api/auth', { method: 'DELETE' });
       setUser({ name: 'GuestUser', role: 'guest' });
       setShowAuthDropdown(false);
-      showToast('Anda telah logout dari mode Admin', 'info');
+      showToast('Logged out from Admin mode', 'info');
     } catch (e) {
       console.error(e);
     }
@@ -329,12 +329,12 @@ export default function HansWYFileArchiveApp() {
         setShowCreateFolderModal(false);
         setNewFolderName('');
         fetchContents(currentFolderId, true);
-        showToast('Folder berhasil dibuat ✓', 'success');
+        showToast('Folder created successfully ✓', 'success');
       } else {
-        showToast((data.error as string) || 'Gagal membuat folder', 'error');
+        showToast((data.error as string) || 'Failed to create folder', 'error');
       }
     } catch (err) {
-      showToast((err as Error).message || 'Terjadi kesalahan jaringan', 'error');
+      showToast((err as Error).message || 'Network error encountered', 'error');
     } finally {
       setCreatingFolder(false);
     }
@@ -356,12 +356,12 @@ export default function HansWYFileArchiveApp() {
         setRenameTarget(null);
         setRenameInput('');
         fetchContents(currentFolderId, true);
-        showToast('Nama berhasil diubah ✓', 'success');
+        showToast('Item renamed successfully ✓', 'success');
       } else {
-        showToast((data.error as string) || 'Gagal mengubah nama', 'error');
+        showToast((data.error as string) || 'Failed to rename item', 'error');
       }
     } catch (err) {
-      showToast((err as Error).message || 'Terjadi kesalahan jaringan', 'error');
+      showToast((err as Error).message || 'Network error encountered', 'error');
     }
   };
 
@@ -378,12 +378,12 @@ export default function HansWYFileArchiveApp() {
       if (data.success) {
         setDeleteTarget(null);
         fetchContents(currentFolderId, true);
-        showToast(`${deleteTarget.type === 'folder' ? 'Folder' : 'File'} berhasil dihapus ✓`, 'success');
+        showToast(`${deleteTarget.type === 'folder' ? 'Folder' : 'File'} deleted successfully ✓`, 'success');
       } else {
-        showToast((data.error as string) || 'Gagal menghapus item', 'error');
+        showToast((data.error as string) || 'Failed to delete item', 'error');
       }
     } catch (err) {
-      showToast((err as Error).message || 'Terjadi kesalahan jaringan', 'error');
+      showToast((err as Error).message || 'Network error encountered', 'error');
     } finally {
       setDeleting(false);
     }
@@ -406,9 +406,9 @@ export default function HansWYFileArchiveApp() {
       a.click();
       a.remove();
 
-      showToast(`Mengunduh "${file.name}" (${formatFileSize(file.size)})... 🚀`, 'info');
+      showToast(`Downloading "${file.name}" (${formatFileSize(file.size)})... 🚀`, 'info');
     } catch (err) {
-      showToast((err as Error).message || 'Gagal mengunduh file', 'error');
+      showToast((err as Error).message || 'Failed to trigger file download', 'error');
     } finally {
       setTimeout(() => setDownloadingFileId(null), 1200);
     }
@@ -419,13 +419,13 @@ export default function HansWYFileArchiveApp() {
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
     const shareableUrl = `${origin}?download=${encodeURIComponent(file.id)}`;
     navigator.clipboard.writeText(shareableUrl);
-    showToast('Tautan langsung disalin ke papan klip! 📋', 'success');
+    showToast('Direct download link copied to clipboard! 📋', 'success');
   };
 
   // Copy NMID for Support
   const copyNmid = () => {
     navigator.clipboard.writeText('ID1023272477176');
-    showToast('NMID ID1023272477176 berhasil disalin! 📋', 'success');
+    showToast('NMID ID1023272477176 copied to clipboard! 📋', 'success');
   };
 
   // ---- BULK UPLOAD LOGIC ----
@@ -501,7 +501,7 @@ export default function HansWYFileArchiveApp() {
           setProgress(100);
           setSuccess();
         } catch (uploadErr) {
-          setError((uploadErr as Error).message || 'Gagal mengunggah file ke GitHub');
+          setError((uploadErr as Error).message || 'Failed to upload file to GitHub');
         }
       } else {
         const formData = new FormData();
@@ -528,11 +528,11 @@ export default function HansWYFileArchiveApp() {
           setProgress(100);
           setSuccess();
         } else {
-          setError((data.error as string) || 'Gagal mengunggah file');
+          setError((data.error as string) || 'Failed to upload file');
         }
       }
     } catch (err) {
-      setError((err as Error).message || 'Terjadi kesalahan jaringan');
+      setError((err as Error).message || 'Network error encountered during upload');
     }
   };
 
@@ -546,7 +546,7 @@ export default function HansWYFileArchiveApp() {
     }
     setIsProcessingQueue(false);
     fetchContents(currentFolderId, true);
-    showToast('Proses upload selesai! ✓', 'success');
+    showToast('Upload process completed! ✓', 'success');
   };
 
   const closeUploadModal = () => {
@@ -559,7 +559,7 @@ export default function HansWYFileArchiveApp() {
     setShowUploadModal(false);
   };
 
-  // Check URL parameters for direct file download
+  // Check URL parameters for direct file download (?download=...)
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
@@ -599,16 +599,16 @@ export default function HansWYFileArchiveApp() {
           a.click();
           a.remove();
 
-          showToast(`Mengunduh "${target.name}" (${formatFileSize(target.size)})... 🚀`, 'info');
+          showToast(`Downloading "${target.name}" (${formatFileSize(target.size)})... 🚀`, 'info');
         } else {
-          throw new Error((data.error as string) || 'File tidak ditemukan');
+          throw new Error((data.error as string) || 'Requested file was not found');
         }
       })
       .catch((err) => {
         if (!isMounted) return;
         setAutoDownloadLoading(false);
-        setAutoDownloadError(err.message || 'Gagal memuat informasi file');
-        showToast(err.message || 'Gagal mengunduh file', 'error');
+        setAutoDownloadError(err.message || 'Failed to retrieve file download details');
+        showToast(err.message || 'Failed to trigger file download', 'error');
       });
 
     return () => {
@@ -625,7 +625,7 @@ export default function HansWYFileArchiveApp() {
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
   };
 
-  // Format Date & Time like screenshot (e.g., "14 Oct 2026", "21:34 WIB")
+  // Format Date & Time (e.g. "14 Oct 2026", "21:34 WIB")
   const formatDateParts = (dateString: string) => {
     try {
       const d = new Date(dateString);
@@ -676,7 +676,7 @@ export default function HansWYFileArchiveApp() {
       <button
         className="mobile-nav-toggle"
         onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}
-        aria-label="Toggle Menu"
+        aria-label="Toggle Navigation Menu"
       >
         {mobileSidebarOpen ? <X size={20} /> : <Menu size={20} />}
       </button>
@@ -713,7 +713,7 @@ export default function HansWYFileArchiveApp() {
             }}
           >
             <div className="nav-item-content">
-              <Folder size={17} color={currentFolderId === null ? 'var(--accent-cyan)' : '#8591a5'} />
+              <Folder size={17} color={currentFolderId === null ? 'var(--accent-cyan)' : 'var(--text-secondary)'} />
               <span>All files</span>
             </div>
             {currentFolderId === null && <span className="nav-arrow-active">↗</span>}
@@ -728,7 +728,7 @@ export default function HansWYFileArchiveApp() {
             }}
           >
             <div className="nav-item-content">
-              <Clock size={17} color="#8591a5" />
+              <Clock size={17} color="var(--text-secondary)" />
               <span>Changelog</span>
             </div>
           </button>
@@ -743,7 +743,7 @@ export default function HansWYFileArchiveApp() {
             className="nav-item-hanswy"
           >
             <div className="nav-item-content">
-              <MessageSquare size={17} color="#8591a5" />
+              <MessageSquare size={17} color="var(--text-secondary)" />
               <span>Discord</span>
             </div>
             <span className="nav-arrow-external">↗</span>
@@ -773,13 +773,13 @@ export default function HansWYFileArchiveApp() {
             <div
               className="user-status-card"
               onClick={() => setShowAuthDropdown(!showAuthDropdown)}
-              title="Akses Admin"
+              title="Admin Authentication Access"
             >
               <div className="user-status-left">
                 <div className="user-avatar-badge">{user.role === 'admin' ? 'H' : 'G'}</div>
                 <span className="user-name">{user.role === 'admin' ? 'HansWY (Admin)' : user.name}</span>
               </div>
-              <ChevronDown size={14} color="#727f95" />
+              <ChevronDown size={14} color="var(--text-muted)" />
             </div>
 
             {showAuthDropdown && (
@@ -789,12 +789,12 @@ export default function HansWYFileArchiveApp() {
                   bottom: 'calc(100% + 4px)',
                   left: 0,
                   right: 0,
-                  backgroundColor: 'var(--bg-card)',
-                  border: '1px solid var(--border-subtle)',
+                  backgroundColor: 'var(--modal-bg)',
+                  border: '1px solid var(--modal-border)',
                   borderRadius: 'var(--radius-sm)',
                   padding: '6px',
                   zIndex: 60,
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
                 }}
               >
                 {user.role === 'admin' ? (
@@ -806,7 +806,7 @@ export default function HansWYFileArchiveApp() {
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
-                      color: '#ff4757',
+                      color: '#ef4444',
                       fontSize: '0.82rem',
                       fontWeight: 600,
                     }}
@@ -830,7 +830,7 @@ export default function HansWYFileArchiveApp() {
                       fontWeight: 600,
                     }}
                   >
-                    <Unlock size={14} /> Login Admin
+                    <Unlock size={14} /> Admin Login
                   </button>
                 )}
               </div>
@@ -853,12 +853,13 @@ export default function HansWYFileArchiveApp() {
               className="breadcrumb-root-icon"
               onClick={() => navigateToFolder(null)}
               style={{ cursor: 'pointer' }}
+              title="Return to Root"
             >
               <Folder size={16} />
             </span>
             {breadcrumbs.map((crumb, idx) => (
               <React.Fragment key={crumb.id || 'root'}>
-                {idx > 0 && <span style={{ color: '#556277' }}>/</span>}
+                {idx > 0 && <span style={{ color: 'var(--text-muted)' }}>/</span>}
                 <span
                   className={
                     idx === breadcrumbs.length - 1 ? 'breadcrumb-item-current' : 'breadcrumb-item-text'
@@ -874,10 +875,10 @@ export default function HansWYFileArchiveApp() {
           <div className="top-nav-right">
             <span className="top-badge-title">HANSWY / DOWNLOAD CENTER</span>
 
-            {/* Toggleable Theme Button */}
+            {/* Toggleable Theme Button (Cosmic Cyan vs Themes White) */}
             <button
               className={`theme-toggle-btn ${cosmicThemeActive ? 'active' : ''}`}
-              title={cosmicThemeActive ? 'Klik untuk menonaktifkan Tema Cosmic Cyan (Mode Gelap Minimalis)' : 'Klik untuk mengaktifkan Tema HansWY Cosmic Cyan'}
+              title={cosmicThemeActive ? 'Themes cosmic cyan on (click to switch to Themes white)' : 'Themes white on (click to switch to Themes cosmic cyan)'}
               onClick={toggleTheme}
             >
               {cosmicThemeActive ? <Sun size={17} /> : <Moon size={17} />}
@@ -889,7 +890,7 @@ export default function HansWYFileArchiveApp() {
         {schemaMissing && (
           <div
             style={{
-              backgroundColor: 'rgba(0, 210, 255, 0.08)',
+              backgroundColor: 'var(--accent-subtle)',
               border: '1px solid var(--accent-cyan)',
               borderRadius: 'var(--radius-md)',
               padding: '14px 18px',
@@ -901,18 +902,18 @@ export default function HansWYFileArchiveApp() {
           >
             <AlertCircle size={20} color="var(--accent-cyan)" style={{ flexShrink: 0, marginTop: '2px' }} />
             <div style={{ flex: 1 }}>
-              <h4 style={{ color: '#ffffff', fontSize: '0.92rem', fontWeight: 700, marginBottom: '4px' }}>
-                GitHub Storage Belum Dikonfigurasi
+              <h4 style={{ color: 'var(--text-primary)', fontSize: '0.92rem', fontWeight: 700, marginBottom: '4px' }}>
+                GitHub Cloud Storage Not Configured
               </h4>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', lineHeight: '1.5' }}>
-                {schemaErrorMessage || 'Silakan tambahkan GITHUB_TOKEN di file .env.local untuk penyimpanan cloud.'}
+                {schemaErrorMessage || 'Please configure GITHUB_TOKEN in your environment variables for continuous cloud releases.'}
               </p>
             </div>
           </div>
         )}
 
         {/* ============================================================
-            HERO BANNER - ANIMATION VIDEO (OTOMATIS TANPA PLAY BUTTON)
+            HERO BANNER - ANIMATION VIDEO (AUTOPLAY WITHOUT PLAY BUTTON)
             ============================================================ */}
         <section className="hero-banner-wrap">
           <video
@@ -936,9 +937,9 @@ export default function HansWYFileArchiveApp() {
             <div className="changelog-info">
               <div className="changelog-meta">
                 <span className="changelog-tag">CHANGELOG</span>
-                <span className="changelog-date">23 Oct 2026 • 21:00 WIB</span>
+                <span className="changelog-date">29 Oct 2026 • 01:00 WIB</span>
               </div>
-              <span className="changelog-title">STILL UPDATING</span>
+              <span className="changelog-title">VERSION 2.4 - THEME & LOCALIZATION UPDATE</span>
             </div>
           </div>
 
@@ -996,7 +997,7 @@ export default function HansWYFileArchiveApp() {
               className="icon-control-btn"
               onClick={() => fetchContents(currentFolderId, true)}
               disabled={refreshing}
-              title="Perbarui folder"
+              title="Refresh directory"
             >
               <RotateCw size={15} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} />
             </button>
@@ -1007,7 +1008,7 @@ export default function HansWYFileArchiveApp() {
                 <button
                   className="btn-admin-action secondary"
                   onClick={() => setShowCreateFolderModal(true)}
-                  title="Buat folder baru"
+                  title="Create new directory"
                 >
                   <Plus size={14} />
                   <span>Folder</span>
@@ -1015,7 +1016,7 @@ export default function HansWYFileArchiveApp() {
                 <button
                   className="btn-admin-action primary"
                   onClick={() => setShowUploadModal(true)}
-                  title="Upload file"
+                  title="Upload files"
                 >
                   <Upload size={14} />
                   <span>Upload</span>
@@ -1044,7 +1045,7 @@ export default function HansWYFileArchiveApp() {
             }}
           >
             <ArrowLeft size={16} />
-            <span>Kembali ke folder sebelumnya (..)</span>
+            <span>Go back to parent directory (..)</span>
           </div>
         )}
 
@@ -1058,7 +1059,7 @@ export default function HansWYFileArchiveApp() {
         {loading && (
           <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-secondary)' }}>
             <RotateCw size={28} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 12px' }} />
-            <p style={{ fontSize: '0.85rem' }}>Memuat direktori HansWY Archive...</p>
+            <p style={{ fontSize: '0.85rem' }}>Loading HansWY Archive directory...</p>
           </div>
         )}
 
@@ -1079,11 +1080,11 @@ export default function HansWYFileArchiveApp() {
                 }}
               >
                 <Folder size={36} color="var(--text-muted)" style={{ margin: '0 auto 10px' }} />
-                <h4 style={{ color: 'var(--text-secondary)', marginBottom: '4px', fontSize: '0.95rem' }}>
-                  {searchQuery ? 'Tidak ada file atau folder yang cocok' : 'Direktori ini masih kosong'}
+                <h4 style={{ color: 'var(--text-primary)', marginBottom: '4px', fontSize: '0.95rem' }}>
+                  {searchQuery ? 'No matching files or folders found' : 'This directory is empty'}
                 </h4>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                  {searchQuery ? 'Coba gunakan kata kunci pencarian yang lain.' : 'Belum ada konten di dalam folder ini.'}
+                  {searchQuery ? 'Try searching with a different keyword.' : 'No content uploaded in this folder yet.'}
                 </p>
               </div>
             )}
@@ -1113,7 +1114,7 @@ export default function HansWYFileArchiveApp() {
                       <div style={{ display: 'flex', gap: '6px' }}>
                         <button
                           className="btn-icon-admin"
-                          title="Ubah nama"
+                          title="Rename folder"
                           onClick={() => {
                             setRenameTarget({ type: 'folder', id: folder.id, name: folder.name });
                             setRenameInput(folder.name);
@@ -1123,7 +1124,7 @@ export default function HansWYFileArchiveApp() {
                         </button>
                         <button
                           className="btn-icon-admin delete"
-                          title="Hapus folder"
+                          title="Delete folder"
                           onClick={() => setDeleteTarget({ type: 'folder', id: folder.id, name: folder.name })}
                         >
                           <Trash2 size={13} />
@@ -1157,7 +1158,7 @@ export default function HansWYFileArchiveApp() {
                       <span className="item-row-title" title={file.name}>
                         {file.name}
                       </span>
-                      <span style={{ fontSize: '0.74rem', color: '#74829a', fontFamily: 'var(--font-mono)' }}>
+                      <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
                         {formatFileSize(file.size)}
                       </span>
                     </div>
@@ -1173,7 +1174,7 @@ export default function HansWYFileArchiveApp() {
                       <div style={{ display: 'flex', gap: '6px' }}>
                         <button
                           className="btn-icon-admin"
-                          title="Ubah nama"
+                          title="Rename file"
                           onClick={() => {
                             setRenameTarget({ type: 'file', id: file.id, name: file.name });
                             setRenameInput(file.name);
@@ -1183,7 +1184,7 @@ export default function HansWYFileArchiveApp() {
                         </button>
                         <button
                           className="btn-icon-admin delete"
-                          title="Hapus file"
+                          title="Delete file"
                           onClick={() => setDeleteTarget({ type: 'file', id: file.id, name: file.name })}
                         >
                           <Trash2 size={13} />
@@ -1193,7 +1194,7 @@ export default function HansWYFileArchiveApp() {
 
                     <button
                       className="btn-icon-admin"
-                      title="Salin tautan langsung"
+                      title="Copy direct download link"
                       onClick={() => copyDirectLink(file)}
                     >
                       <LinkIcon size={13} />
@@ -1203,6 +1204,7 @@ export default function HansWYFileArchiveApp() {
                       className="item-btn-download"
                       onClick={() => handleDownloadFile(file)}
                       disabled={downloadingFileId === file.id}
+                      title="Download file"
                     >
                       {downloadingFileId === file.id ? (
                         <RotateCw size={13} style={{ animation: 'spin 1s linear infinite' }} />
@@ -1233,7 +1235,7 @@ export default function HansWYFileArchiveApp() {
         <footer className="site-footer-bar">
           <div className="site-footer-brand">
             <span className="footer-brand-name">HANSWY</span>
-            <span style={{ color: '#8897ad' }}>FILES</span>
+            <span style={{ color: 'var(--text-muted)' }}>FILES</span>
             <span className="footer-brand-tagline">Pick a folder. Find your version.</span>
           </div>
           <span
@@ -1295,7 +1297,7 @@ export default function HansWYFileArchiveApp() {
               <div>
                 <div className="modal-pretitle">CHANGELOG ARCHIVE</div>
                 <h3 className="modal-title-hanswy">
-                  HansWY Release Notes<span className="accent-dot">.</span>
+                  Release Notes<span className="accent-dot">.</span>
                 </h3>
               </div>
               <button
@@ -1306,22 +1308,31 @@ export default function HansWYFileArchiveApp() {
               </button>
             </div>
 
-            <div className="modal-text-body" style={{ maxHeight: '320px', overflowY: 'auto' }}>
+            <div className="modal-text-body" style={{ maxHeight: '340px', overflowY: 'auto' }}>
               <div style={{ borderLeft: '2px solid var(--accent-cyan)', paddingLeft: '12px', marginBottom: '14px' }}>
-                <b style={{ color: '#ffffff' }}>23 Oct 2026 - 21:00 WIB</b>
+                <b style={{ color: 'var(--text-primary)' }}>29 Oct 2026 - 01:00 WIB (v2.4)</b>
                 <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
-                  • Pembaruan tampilan HansWY File Archive bertema Cosmic Electric Cyan.
-                  <br />• Integrasi auto-play video animasi banner.
-                  <br />• Dukungan QRIS nasional untuk donasi pengembang.
-                  <br />• Fitur toggle tema Cosmic Cyan vs Mode Minimalis.
+                  • Complete English localization across all pages, controls, and dialogs.
+                  <br />• Dual theme engine: <b>Themes cosmic cyan on</b> & <b>Themes white on</b>.
+                  <br />• Streamlined compact QRIS donation template (mobile & desktop optimized).
+                  <br />• Removed sponsor space for a cleaner and clutter-free interface.
+                  <br />• Official Discord server link updated.
                 </p>
               </div>
 
-              <div style={{ borderLeft: '2px solid #202b3f', paddingLeft: '12px', marginBottom: '14px' }}>
-                <b style={{ color: '#ffffff' }}>14 Oct 2026 - 14:34 WIB</b>
+              <div style={{ borderLeft: '2px solid var(--border-card)', paddingLeft: '12px', marginBottom: '14px' }}>
+                <b style={{ color: 'var(--text-primary)' }}>23 Oct 2026 - 21:00 WIB (v2.2)</b>
                 <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
-                  • Initial release HansWY Launcher & Tools package.
-                  <br />• Pembaruan kompatibilitas Android 10-13.
+                  • Redesigned brand and theme to HansWY Cosmic Cyan.
+                  <br />• Autoplay animated hero banner video integration without play buttons.
+                  <br />• Instant search filtering for folders and files.
+                </p>
+              </div>
+
+              <div style={{ borderLeft: '2px solid var(--border-card)', paddingLeft: '12px', marginBottom: '14px' }}>
+                <b style={{ color: 'var(--text-primary)' }}>14 Oct 2026 - 14:34 WIB (v1.0)</b>
+                <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
+                  • Initial release of HansWY Launcher & Tools packages with Android 10-13 compatibility.
                 </p>
               </div>
             </div>
@@ -1330,20 +1341,20 @@ export default function HansWYFileArchiveApp() {
               className="btn-hanswy-primary"
               onClick={() => setShowChangelogModal(false)}
             >
-              Tutup Catatan
+              Close Notes
             </button>
           </div>
         </div>
       )}
 
-      {/* SUPPORT HANSWY - QRIS MODAL (PROFESSIONAL TEMPLATE) */}
+      {/* SUPPORT HANSWY - QRIS MODAL (STREAMLINED & COMPACT TEMPLATE) */}
       {showSupportModal && (
         <div className="modal-overlay" onClick={() => setShowSupportModal(false)}>
-          <div className="modal-dialog-hanswy modal-support-wide" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header-hanswy" style={{ textAlign: 'left' }}>
+          <div className="modal-dialog-hanswy modal-support-compact" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-hanswy" style={{ textAlign: 'left', marginBottom: '12px' }}>
               <div>
-                <div className="modal-pretitle">DONASI & DUKUNGAN</div>
-                <h3 className="modal-title-hanswy">
+                <div className="modal-pretitle">DONATION & SUPPORT</div>
+                <h3 className="modal-title-hanswy" style={{ fontSize: '1.2rem' }}>
                   Support HansWY<span className="accent-dot">.</span>
                 </h3>
               </div>
@@ -1355,68 +1366,52 @@ export default function HansWYFileArchiveApp() {
               </button>
             </div>
 
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', textAlign: 'left', lineHeight: '1.5', marginBottom: '10px' }}>
-              Dukungan sukarela Anda sangat berharga untuk pemeliharaan server berkecepatan tinggi, update berkala aplikasi APK, dan infrastruktur penyimpanan cloud gratis.
+            <p className="qris-notice-brief">
+              Scan with any mobile banking or e-wallet application (BCA, Mandiri, GoPay, OVO, Dana, ShopeePay) to support free cloud updates.
             </p>
 
-            {/* QRIS White Card Container */}
-            <div className="qris-card-wrapper">
+            {/* Compact QRIS Barcode Card */}
+            <div className="qris-card-wrapper-compact">
               <img
                 src="/qris.png"
                 alt="QRIS HansWY - HAIDRINK.IND"
-                className="qris-display-img"
+                className="qris-display-img-compact"
               />
 
-              <div className="qris-merchant-badge">
-                <span className="qris-merchant-name">HAIDRINK.IND</span>
-                <div className="qris-merchant-nmid">
+              <div className="qris-meta-compact">
+                <span className="qris-merchant-title">HAIDRINK.IND</span>
+                <div className="qris-merchant-sub">
                   <span>NMID: ID1023272477176</span>
                   <button
                     type="button"
-                    className="qris-copy-nmid-btn"
+                    className="qris-copy-btn"
                     onClick={copyNmid}
-                    title="Salin NMID"
+                    title="Copy NMID"
                   >
-                    <Copy size={11} />
-                    <span>Salin</span>
+                    <Copy size={10} />
+                    <span>Copy</span>
                   </button>
                 </div>
               </div>
             </div>
 
-            {/* Panduan Pembayaran */}
-            <div className="qris-support-steps">
-              <div className="qris-step-item">
-                <span className="qris-step-num">1</span>
-                <span>Buka aplikasi m-Banking (BCA, Mandiri, BRI, dll) atau e-Wallet (GoPay, OVO, Dana, ShopeePay).</span>
-              </div>
-              <div className="qris-step-item">
-                <span className="qris-step-num">2</span>
-                <span>Pilih menu <b>Scan QRIS</b> dan arahkan kamera ke barcode di atas (atau pilih dari galeri).</span>
-              </div>
-              <div className="qris-step-item">
-                <span className="qris-step-num">3</span>
-                <span>Masukkan nominal dukungan seikhlasnya lalu selesaikan pembayaran. Terima kasih banyak atas apresiasi Anda! ❤️</span>
-              </div>
-            </div>
-
-            {/* Aksi Modal Support */}
-            <div className="qris-actions-row">
+            {/* Action buttons */}
+            <div className="qris-actions-compact">
               <a
                 href="/qris.png"
                 download="QRIS-HansWY-HAIDRINK.png"
-                className="btn-qris-download"
+                className="btn-qris-outline"
               >
-                <Download size={14} />
-                <span>Unduh Gambar QRIS</span>
+                <Download size={13} />
+                <span>Save QR</span>
               </a>
               <button
                 type="button"
                 className="btn-hanswy-primary"
-                style={{ flex: 1, padding: '10px 14px' }}
+                style={{ flex: 1, padding: '9px 14px', fontSize: '0.85rem' }}
                 onClick={() => setShowSupportModal(false)}
               >
-                Selesai
+                Done
               </button>
             </div>
           </div>
@@ -1431,7 +1426,7 @@ export default function HansWYFileArchiveApp() {
               <div>
                 <div className="modal-pretitle">AUTHENTICATION</div>
                 <h3 className="modal-title-hanswy">
-                  Login Admin HansWY<span className="accent-dot">.</span>
+                  Admin Login<span className="accent-dot">.</span>
                 </h3>
               </div>
               <button
@@ -1445,16 +1440,16 @@ export default function HansWYFileArchiveApp() {
             <form onSubmit={handleLogin}>
               <div className="modal-body">
                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', marginBottom: '14px' }}>
-                  Masukkan password admin untuk mengelola file, folder, dan upload.
+                  Enter administrator password to manage files, directories, and uploads.
                 </p>
                 {authError && (
                   <div
                     style={{
                       padding: '8px 12px',
-                      backgroundColor: 'rgba(255, 82, 82, 0.15)',
-                      border: '1px solid #ff5252',
+                      backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                      border: '1px solid #ef4444',
                       borderRadius: 'var(--radius-sm)',
-                      color: '#ff6b75',
+                      color: '#ef4444',
                       fontSize: '0.82rem',
                       marginBottom: '14px',
                       display: 'flex',
@@ -1466,11 +1461,11 @@ export default function HansWYFileArchiveApp() {
                   </div>
                 )}
                 <div className="form-group">
-                  <label className="form-label">Password Admin</label>
+                  <label className="form-label">Admin Password</label>
                   <input
                     type="password"
                     className="form-input"
-                    placeholder="Masukkan password..."
+                    placeholder="Enter password..."
                     value={adminPasswordInput}
                     onChange={(e) => setAdminPasswordInput(e.target.value)}
                     autoFocus
@@ -1484,10 +1479,10 @@ export default function HansWYFileArchiveApp() {
                   className="btn-cancel"
                   onClick={() => setShowLoginModal(false)}
                 >
-                  Batal
+                  Cancel
                 </button>
                 <button type="submit" className="btn-admin-action primary">
-                  Login Admin
+                  Sign In
                 </button>
               </div>
             </form>
@@ -1503,7 +1498,7 @@ export default function HansWYFileArchiveApp() {
               <div>
                 <div className="modal-pretitle">MANAGEMENT</div>
                 <h3 className="modal-title-hanswy">
-                  Buat Folder Baru<span className="accent-dot">.</span>
+                  Create Folder<span className="accent-dot">.</span>
                 </h3>
               </div>
               <button
@@ -1516,11 +1511,11 @@ export default function HansWYFileArchiveApp() {
             </div>
             <form onSubmit={handleCreateFolder}>
               <div className="form-group">
-                <label className="form-label">Nama Folder</label>
+                <label className="form-label">Folder Name</label>
                 <input
                   type="text"
                   className="form-input"
-                  placeholder="Contoh: LAUNCHER, TOOLS, ARCEUS..."
+                  placeholder="e.g. LAUNCHER, TOOLS, ARCEUS..."
                   value={newFolderName}
                   onChange={(e) => setNewFolderName(e.target.value)}
                   autoFocus
@@ -1535,7 +1530,7 @@ export default function HansWYFileArchiveApp() {
                   disabled={creatingFolder}
                   onClick={() => setShowCreateFolderModal(false)}
                 >
-                  Batal
+                  Cancel
                 </button>
                 <button
                   type="submit"
@@ -1544,10 +1539,10 @@ export default function HansWYFileArchiveApp() {
                 >
                   {creatingFolder ? (
                     <>
-                      <RotateCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> Membuat...
+                      <RotateCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> Creating...
                     </>
                   ) : (
-                    'Buat Folder'
+                    'Create'
                   )}
                 </button>
               </div>
@@ -1564,7 +1559,7 @@ export default function HansWYFileArchiveApp() {
               <div>
                 <div className="modal-pretitle">MANAGEMENT</div>
                 <h3 className="modal-title-hanswy">
-                  Ubah Nama {renameTarget.type === 'folder' ? 'Folder' : 'File'}<span className="accent-dot">.</span>
+                  Rename {renameTarget.type === 'folder' ? 'Folder' : 'File'}<span className="accent-dot">.</span>
                 </h3>
               </div>
               <button className="modal-close-btn" onClick={() => setRenameTarget(null)}>
@@ -1573,7 +1568,7 @@ export default function HansWYFileArchiveApp() {
             </div>
             <form onSubmit={handleRename}>
               <div className="form-group">
-                <label className="form-label">Nama Baru</label>
+                <label className="form-label">New Name</label>
                 <input
                   type="text"
                   className="form-input"
@@ -1585,10 +1580,10 @@ export default function HansWYFileArchiveApp() {
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn-cancel" onClick={() => setRenameTarget(null)}>
-                  Batal
+                  Cancel
                 </button>
                 <button type="submit" className="btn-admin-action primary">
-                  Simpan Perubahan
+                  Save Changes
                 </button>
               </div>
             </form>
@@ -1604,7 +1599,7 @@ export default function HansWYFileArchiveApp() {
               <div>
                 <div className="modal-pretitle">DELETE CONFIRMATION</div>
                 <h3 className="modal-title-hanswy">
-                  Hapus {deleteTarget.type === 'folder' ? 'Folder' : 'File'}<span className="accent-dot">?</span>
+                  Delete {deleteTarget.type === 'folder' ? 'Folder' : 'File'}<span className="accent-dot">?</span>
                 </h3>
               </div>
               <button
@@ -1616,7 +1611,7 @@ export default function HansWYFileArchiveApp() {
               </button>
             </div>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '20px' }}>
-              Apakah Anda yakin ingin menghapus <b>"{deleteTarget.name}"</b>? Tindakan ini tidak dapat dibatalkan.
+              Are you sure you want to permanently delete <b>"{deleteTarget.name}"</b>? This action cannot be undone.
             </p>
             <div className="modal-footer">
               <button
@@ -1625,16 +1620,16 @@ export default function HansWYFileArchiveApp() {
                 disabled={deleting}
                 onClick={() => setDeleteTarget(null)}
               >
-                Batal
+                Cancel
               </button>
               <button
                 type="button"
                 className="btn-admin-action primary"
-                style={{ backgroundColor: '#e53935' }}
+                style={{ backgroundColor: '#ef4444' }}
                 disabled={deleting}
                 onClick={handleDelete}
               >
-                {deleting ? 'Menghapus...' : 'Ya, Hapus'}
+                {deleting ? 'Deleting...' : 'Yes, Delete'}
               </button>
             </div>
           </div>
@@ -1649,7 +1644,7 @@ export default function HansWYFileArchiveApp() {
               <div>
                 <div className="modal-pretitle">FILE STORAGE</div>
                 <h3 className="modal-title-hanswy">
-                  Upload File<span className="accent-dot">.</span>
+                  Upload Files<span className="accent-dot">.</span>
                 </h3>
               </div>
               <button className="modal-close-btn" disabled={isProcessingQueue} onClick={closeUploadModal}>
@@ -1659,10 +1654,10 @@ export default function HansWYFileArchiveApp() {
 
             <div className="drop-zone" onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop} onClick={() => !isProcessingQueue && bulkFileInputRef.current?.click()}>
               <Upload size={28} color={isDragOver ? 'var(--accent-cyan)' : 'var(--text-muted)'} style={{ margin: '0 auto 8px', display: 'block' }} />
-              <p style={{ fontWeight: 600, color: '#ffffff', marginBottom: '2px', fontSize: '0.9rem' }}>
-                Seret & lepas file ke sini
+              <p style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '2px', fontSize: '0.9rem' }}>
+                Drag & drop files here
               </p>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>atau klik untuk memilih file</p>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>or click to browse from device</p>
               <input
                 ref={bulkFileInputRef}
                 type="file"
@@ -1676,8 +1671,8 @@ export default function HansWYFileArchiveApp() {
             {uploadQueue.length > 0 && (
               <div className="upload-queue">
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                  <span>Antrean ({uploadQueue.length} file)</span>
-                  {successCount > 0 && <span style={{ color: '#52e38c' }}>{successCount} selesai</span>}
+                  <span>Queue ({uploadQueue.length} files)</span>
+                  {successCount > 0 && <span style={{ color: '#22c55e' }}>{successCount} completed</span>}
                 </div>
 
                 <div className="queue-list">
@@ -1688,10 +1683,10 @@ export default function HansWYFileArchiveApp() {
                         <span className="queue-filesize">{formatFileSize(item.file.size)}</span>
                       </div>
                       {item.status === 'uploading' && <span style={{ fontSize: '0.72rem', color: 'var(--accent-cyan)' }}>{item.progress}%</span>}
-                      {item.status === 'success' && <Check size={14} color="#52e38c" />}
-                      {item.status === 'error' && <span style={{ fontSize: '0.72rem', color: '#ff6b75' }}>Gagal</span>}
+                      {item.status === 'success' && <Check size={14} color="#22c55e" />}
+                      {item.status === 'error' && <span style={{ fontSize: '0.72rem', color: '#ef4444' }}>Failed</span>}
                       {item.status === 'queued' && !isProcessingQueue && (
-                        <button onClick={() => removeFromQueue(item.id)} style={{ color: '#65728a' }}>
+                        <button onClick={() => removeFromQueue(item.id)} style={{ color: 'var(--text-muted)' }}>
                           <X size={13} />
                         </button>
                       )}
@@ -1703,7 +1698,7 @@ export default function HansWYFileArchiveApp() {
 
             <div className="modal-footer">
               <button type="button" className="btn-cancel" disabled={isProcessingQueue} onClick={closeUploadModal}>
-                Tutup
+                Close
               </button>
               {queuedCount > 0 && (
                 <button
@@ -1712,7 +1707,7 @@ export default function HansWYFileArchiveApp() {
                   disabled={isProcessingQueue}
                   onClick={startBatchUpload}
                 >
-                  {isProcessingQueue ? 'Mengunggah...' : `Unggah (${queuedCount} file)`}
+                  {isProcessingQueue ? 'Uploading...' : `Upload (${queuedCount} files)`}
                 </button>
               )}
             </div>
@@ -1725,13 +1720,13 @@ export default function HansWYFileArchiveApp() {
         <div className="modal-overlay" onClick={() => setAutoDownloadFile(null)}>
           <div className="modal-dialog-hanswy" onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center' }}>
             <div className="modal-header-hanswy" style={{ justifyContent: 'center' }}>
-              <h3 className="modal-title-hanswy">Unduhan File HansWY</h3>
+              <h3 className="modal-title-hanswy">HansWY File Download</h3>
             </div>
             <div style={{ margin: '16px 0' }}>
               <Download size={36} color="var(--accent-cyan)" style={{ margin: '0 auto 12px' }} />
-              <h4 style={{ color: '#ffffff', fontSize: '1rem', marginBottom: '6px' }}>{autoDownloadFile.name}</h4>
+              <h4 style={{ color: 'var(--text-primary)', fontSize: '1rem', marginBottom: '6px' }}>{autoDownloadFile.name}</h4>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.84rem' }}>
-                Ukuran: {formatFileSize(autoDownloadFile.size)}
+                Size: {formatFileSize(autoDownloadFile.size)}
               </p>
             </div>
             <a
@@ -1739,18 +1734,18 @@ export default function HansWYFileArchiveApp() {
               download={autoDownloadFile.name}
               className="btn-hanswy-primary"
             >
-              Unduh Lagi Sekarang
+              Download Again
             </a>
           </div>
         </div>
       )}
 
-      {/* TOASTS */}
+      {/* TOAST NOTIFICATIONS */}
       <div className="toast-container">
         {toasts.map((toast) => (
           <div key={toast.id} className={`toast ${toast.type}`}>
-            {toast.type === 'success' && <Check size={16} color="#52e38c" />}
-            {toast.type === 'error' && <AlertCircle size={16} color="#ff5252" />}
+            {toast.type === 'success' && <Check size={16} color="#22c55e" />}
+            {toast.type === 'error' && <AlertCircle size={16} color="#ef4444" />}
             {toast.type === 'info' && <Clock size={16} color="var(--accent-cyan)" />}
             <span>{toast.text}</span>
           </div>
