@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import crypto from 'crypto';
 
 // Nama cookie session
-const AUTH_COOKIE_NAME = 'hanswy_admin_token';
+export const AUTH_COOKIE_NAME = 'hanswy_admin_token';
 
 // Secret key untuk HMAC session signature (didapat dari env atau fallback acak stabil)
 const SESSION_SECRET =
@@ -135,5 +135,7 @@ export function getAdminCookieHeader(req?: NextRequest): string {
  * Cookie header untuk logout
  */
 export function getLogoutCookieHeader(): string {
-  return `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+  const isProd = process.env.NODE_ENV === 'production';
+  const secureFlag = isProd ? '; Secure' : '';
+  return `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT${secureFlag}`;
 }

@@ -301,8 +301,10 @@ export default function HansWYFileArchiveApp() {
       setUser({ name: 'GuestUser', role: 'guest' });
       setShowAuthDropdown(false);
       showToast('Logged out from Admin mode', 'info');
+      fetchContents(currentFolderId, true);
     } catch (e) {
-      console.error(e);
+      console.error('Logout failed:', e);
+      showToast('Failed to log out', 'error');
     }
   };
 
@@ -784,6 +786,8 @@ export default function HansWYFileArchiveApp() {
 
             {showAuthDropdown && (
               <div
+                className="auth-dropdown"
+                onMouseDown={(e) => e.stopPropagation()}
                 style={{
                   position: 'absolute',
                   bottom: 'calc(100% + 4px)',
@@ -799,7 +803,11 @@ export default function HansWYFileArchiveApp() {
               >
                 {user.role === 'admin' ? (
                   <button
-                    onClick={handleLogout}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleLogout();
+                    }}
                     style={{
                       width: '100%',
                       padding: '8px 12px',
@@ -809,13 +817,16 @@ export default function HansWYFileArchiveApp() {
                       color: '#ef4444',
                       fontSize: '0.82rem',
                       fontWeight: 600,
+                      cursor: 'pointer',
                     }}
                   >
                     <Lock size={14} /> Logout Admin
                   </button>
                 ) : (
                   <button
-                    onClick={() => {
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setShowAuthDropdown(false);
                       setShowLoginModal(true);
                     }}
@@ -828,6 +839,7 @@ export default function HansWYFileArchiveApp() {
                       color: 'var(--text-primary)',
                       fontSize: '0.82rem',
                       fontWeight: 600,
+                      cursor: 'pointer',
                     }}
                   >
                     <Unlock size={14} /> Admin Login

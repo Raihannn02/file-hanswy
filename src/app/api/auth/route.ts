@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
+  AUTH_COOKIE_NAME,
   verifyAdminPassword,
   getAdminCookieHeader,
   getLogoutCookieHeader,
@@ -126,6 +127,17 @@ export async function DELETE() {
     user: { name: 'GuestUser', role: 'guest' },
   });
 
+  response.cookies.delete(AUTH_COOKIE_NAME);
+  response.cookies.set({
+    name: AUTH_COOKIE_NAME,
+    value: '',
+    path: '/',
+    maxAge: 0,
+    expires: new Date(0),
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+  });
   response.headers.set('Set-Cookie', getLogoutCookieHeader());
   return response;
 }
