@@ -23,10 +23,12 @@ Website penyimpanan dan pengelolaan file 24 jam berbasis Next.js & Vercel dengan
    - **Tombol Refresh**: Memuat ulang data file dan folder secara instan.
    - **Indikator Jumlah Item**: Menampilkan jumlah item pada setiap folder dan total item di bagian bawah (`Showing X items`).
 
-3. **Keamanan & Autentikasi Admin**:
+3. **Keamanan & Autentikasi Admin Terenkripsi**:
    - Pengunjung umum (*GuestUser*) dapat melihat isi folder, mengunduh file, mencari, dan menyalin tautan unduhan.
    - Pengelolaan file (Unggah, Buat Folder, Ubah Nama, dan Hapus) dilindungi oleh password Admin.
-   - Password default: `hanswy2026` (dapat diubah melalui environment variable `ADMIN_PASSWORD`).
+   - Password disimpan dalam bentuk **terenkripsi (Scrypt Hash dengan salt kriptografis)** untuk keamanan tingkat tinggi.
+   - Dilengkapi *timing-safe verification* dan *cryptographic HMAC signed session token*.
+   - Environment variable: `ADMIN_PASSWORD_HASH` (atau `ADMIN_PASSWORD`).
 
 4. **Penyimpanan Cloud (GitHub Releases API)**:
    - File dan metadata disimpan menggunakan GitHub Releases API (`storage-metadata` & `storage-files`).
