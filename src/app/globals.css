@@ -1,6 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');
 
-:root {
+:root, [data-theme="cosmic"] {
   /* Deep Space Cosmic Dark (Matching HansWY Banner) */
   --bg-main: #07090e;
   --bg-sidebar: #05070a;
@@ -38,6 +38,32 @@
   --radius-lg: 16px;
   --radius-xl: 20px;
   --radius-full: 9999px;
+
+  --grid-dot-color: rgba(0, 210, 255, 0.06);
+}
+
+/* Minimal Dark Mode (Ketika Tema Cosmic Cyan Dinonaktifkan) */
+[data-theme="minimal"] {
+  --bg-main: #090a0d;
+  --bg-sidebar: #07080a;
+  --bg-card: #0f1117;
+  --bg-card-hover: #151821;
+  --bg-subtle: #171a24;
+
+  --accent-cyan: #38bdf8;
+  --accent-cyan-hover: #7dd3fc;
+  --accent-primary: #0369a1;
+  --accent-primary-hover: #0284c7;
+  --accent-glow: rgba(56, 189, 248, 0.15);
+  --accent-subtle: rgba(56, 189, 248, 0.08);
+  --accent-pill: #131c2b;
+  --accent-border: #1e293b;
+
+  --border-subtle: #1a1e28;
+  --border-card: #1e2433;
+  --border-cyan: rgba(56, 189, 248, 0.2);
+
+  --grid-dot-color: rgba(255, 255, 255, 0.04);
 }
 
 * {
@@ -53,8 +79,9 @@ body {
   min-height: 100vh;
   overflow-x: hidden;
   position: relative;
-  background-image: radial-gradient(rgba(0, 210, 255, 0.06) 1px, transparent 1px);
+  background-image: radial-gradient(var(--grid-dot-color) 1px, transparent 1px);
   background-size: 28px 28px;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 /* Custom Scrollbar */
@@ -109,7 +136,7 @@ input, textarea, select {
   top: 0;
   height: 100vh;
   z-index: 50;
-  transition: transform 0.3s ease;
+  transition: transform 0.3s ease, background-color 0.3s ease;
 }
 
 .brand-section-hanswy {
@@ -351,19 +378,30 @@ input, textarea, select {
 }
 
 .theme-toggle-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #727f95;
-  transition: all 0.2s;
+  color: var(--accent-cyan);
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  transition: all 0.25s ease;
+  position: relative;
 }
 
 .theme-toggle-btn:hover {
   color: #ffffff;
-  background-color: var(--bg-card);
+  border-color: var(--accent-border);
+  box-shadow: 0 0 14px var(--accent-glow);
+  transform: scale(1.05);
+}
+
+.theme-toggle-btn.active {
+  background-color: var(--accent-pill);
+  border-color: var(--accent-border);
+  color: var(--accent-cyan);
 }
 
 /* ============================================================
@@ -806,7 +844,7 @@ input, textarea, select {
 }
 
 /* ============================================================
-   SUB-FOOTER INFO & SPONSOR AD
+   SUB-FOOTER INFO
    ============================================================ */
 .sub-footer-info {
   display: flex;
@@ -814,42 +852,7 @@ input, textarea, select {
   align-items: center;
   font-size: 0.74rem;
   color: #4b5568;
-  padding: 6px 4px 20px 4px;
-}
-
-.sponsor-ad-box {
-  border: 1px dashed #1c2436;
-  border-radius: 10px;
-  padding: 18px 24px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 36px;
-  color: #4a5468;
-}
-
-.sponsor-ad-tag {
-  font-size: 0.68rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #3d4657;
-}
-
-.sponsor-ad-label {
-  font-size: 0.78rem;
-  color: #505c70;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.sponsor-ad-pill {
-  font-size: 0.68rem;
-  background-color: #101520;
-  border: 1px solid #1c2436;
-  padding: 2px 8px;
-  border-radius: 4px;
-  color: #4a5468;
+  padding: 8px 4px 28px 4px;
 }
 
 /* ============================================================
@@ -859,7 +862,7 @@ input, textarea, select {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 0;
+  padding: 18px 0;
   border-top: 1px solid var(--border-subtle);
   font-size: 0.78rem;
 }
@@ -891,12 +894,12 @@ input, textarea, select {
 }
 
 /* ============================================================
-   MODALS (DISCLAIMER, CHANGELOG, LOGIN, UPLOAD)
+   MODALS (DISCLAIMER, CHANGELOG, LOGIN, UPLOAD, SUPPORT QRIS)
    ============================================================ */
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background-color: rgba(0, 0, 0, 0.82);
+  background-color: rgba(0, 0, 0, 0.85);
   backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
@@ -1008,6 +1011,146 @@ input, textarea, select {
 .btn-hanswy-primary:hover {
   background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
   transform: translateY(-1px);
+}
+
+/* ============================================================
+   SUPPORT QRIS MODAL (PROFESSIONAL TEMPLATE)
+   ============================================================ */
+.modal-support-wide {
+  max-width: 440px;
+  text-align: center;
+}
+
+.qris-card-wrapper {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 16px;
+  margin: 14px 0 16px 0;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.qris-display-img {
+  width: 100%;
+  max-width: 280px;
+  height: auto;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.qris-merchant-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #e2e8f0;
+  width: 100%;
+}
+
+.qris-merchant-name {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: 0.05em;
+}
+
+.qris-merchant-nmid {
+  font-size: 0.74rem;
+  font-family: var(--font-mono);
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.qris-copy-nmid-btn {
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.68rem;
+  color: #334155;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.qris-copy-nmid-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.qris-support-steps {
+  background-color: #121825;
+  border: 1px solid #1c273a;
+  border-radius: 10px;
+  padding: 12px 16px;
+  text-align: left;
+  margin-bottom: 18px;
+  font-size: 0.78rem;
+  color: #8c97ab;
+  line-height: 1.55;
+}
+
+.qris-step-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.qris-step-item:last-child {
+  margin-bottom: 0;
+}
+
+.qris-step-num {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background-color: var(--accent-pill);
+  border: 1px solid var(--accent-border);
+  color: var(--accent-cyan);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.qris-actions-row {
+  display: flex;
+  gap: 10px;
+}
+
+.btn-qris-download {
+  flex: 1;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  color: #cbd5e1;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.18s;
+  text-decoration: none;
+}
+
+.btn-qris-download:hover {
+  background: var(--bg-card-hover);
+  color: #ffffff;
+  border-color: var(--accent-cyan);
 }
 
 /* Form Styles */

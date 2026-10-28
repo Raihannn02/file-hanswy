@@ -28,8 +28,11 @@ import {
   Clock,
   Search,
   Sun,
+  Moon,
   Heart,
   MessageSquare,
+  Copy,
+  QrCode,
 } from 'lucide-react';
 import { FolderItem, FileItem, BreadcrumbItem } from '@/lib/types';
 import { isBrowserGitHubReady, uploadFileToGitHubBrowser } from '@/lib/github-browser';
@@ -83,6 +86,9 @@ export default function HansWYFileArchiveApp() {
   const [schemaMissing, setSchemaMissing] = useState<boolean>(false);
   const [schemaErrorMessage, setSchemaErrorMessage] = useState<string>('');
 
+  // Cosmic Cyan Theme State (Toggleable on/off)
+  const [cosmicThemeActive, setCosmicThemeActive] = useState<boolean>(true);
+
   // Search filtering
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -94,6 +100,7 @@ export default function HansWYFileArchiveApp() {
   // Modals State
   const [showDisclaimerModal, setShowDisclaimerModal] = useState<boolean>(false);
   const [showChangelogModal, setShowChangelogModal] = useState<boolean>(false);
+  const [showSupportModal, setShowSupportModal] = useState<boolean>(false);
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
   const [adminPasswordInput, setAdminPasswordInput] = useState<string>('');
   const [authError, setAuthError] = useState<string>('');
@@ -138,6 +145,35 @@ export default function HansWYFileArchiveApp() {
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 5000);
+  };
+
+  // Initialize theme from localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedTheme = localStorage.getItem('hanswy_cosmic_theme');
+      if (savedTheme === 'false') {
+        setCosmicThemeActive(false);
+        document.documentElement.setAttribute('data-theme', 'minimal');
+      } else {
+        setCosmicThemeActive(true);
+        document.documentElement.setAttribute('data-theme', 'cosmic');
+      }
+    }
+  }, []);
+
+  // Toggle Theme Function
+  const toggleTheme = () => {
+    const nextState = !cosmicThemeActive;
+    setCosmicThemeActive(nextState);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('hanswy_cosmic_theme', String(nextState));
+      document.documentElement.setAttribute('data-theme', nextState ? 'cosmic' : 'minimal');
+    }
+    if (nextState) {
+      showToast('✨ Tema HansWY Cosmic Cyan berhasil diaktifkan', 'info');
+    } else {
+      showToast('🌙 Mode Gelap Minimalis berhasil diaktifkan', 'info');
+    }
   };
 
   // Check auth status
@@ -384,6 +420,12 @@ export default function HansWYFileArchiveApp() {
     const shareableUrl = `${origin}?download=${encodeURIComponent(file.id)}`;
     navigator.clipboard.writeText(shareableUrl);
     showToast('Tautan langsung disalin ke papan klip! 📋', 'success');
+  };
+
+  // Copy NMID for Support
+  const copyNmid = () => {
+    navigator.clipboard.writeText('ID1023272477176');
+    showToast('NMID ID1023272477176 berhasil disalin! 📋', 'success');
   };
 
   // ---- BULK UPLOAD LOGIC ----
@@ -695,7 +737,7 @@ export default function HansWYFileArchiveApp() {
 
           {/* Discord */}
           <a
-            href="https://discord.com"
+            href="https://discord.gg/BkbchbysvZ"
             target="_blank"
             rel="noopener noreferrer"
             className="nav-item-hanswy"
@@ -707,19 +749,21 @@ export default function HansWYFileArchiveApp() {
             <span className="nav-arrow-external">↗</span>
           </a>
 
-          {/* Support HansWY */}
-          <a
-            href="https://saweria.co"
-            target="_blank"
-            rel="noopener noreferrer"
+          {/* Support HansWY - QRIS Modal Trigger */}
+          <button
+            type="button"
             className="nav-item-hanswy"
+            onClick={() => {
+              setShowSupportModal(true);
+              setMobileSidebarOpen(false);
+            }}
           >
             <div className="nav-item-content">
-              <Heart size={17} color="#8591a5" />
+              <Heart size={17} color="var(--accent-cyan)" />
               <span>Support HansWY</span>
             </div>
-            <span className="nav-arrow-external">↗</span>
-          </a>
+            <span className="nav-arrow-active">↗</span>
+          </button>
         </nav>
 
         {/* Sidebar Footer & Admin Controls */}
@@ -829,12 +873,14 @@ export default function HansWYFileArchiveApp() {
 
           <div className="top-nav-right">
             <span className="top-badge-title">HANSWY / DOWNLOAD CENTER</span>
+
+            {/* Toggleable Theme Button */}
             <button
-              className="theme-toggle-btn"
-              title="Theme Toggle"
-              onClick={() => showToast('Tema HansWY Cosmic Cyan Aktif', 'info')}
+              className={`theme-toggle-btn ${cosmicThemeActive ? 'active' : ''}`}
+              title={cosmicThemeActive ? 'Klik untuk menonaktifkan Tema Cosmic Cyan (Mode Gelap Minimalis)' : 'Klik untuk mengaktifkan Tema HansWY Cosmic Cyan'}
+              onClick={toggleTheme}
             >
-              <Sun size={17} />
+              {cosmicThemeActive ? <Sun size={17} /> : <Moon size={17} />}
             </button>
           </div>
         </div>
@@ -1182,18 +1228,6 @@ export default function HansWYFileArchiveApp() {
         </div>
 
         {/* ============================================================
-            SPONSOR / AD RESPONSIVE BANNER BOX
-            ============================================================ */}
-        <section className="sponsor-ad-box">
-          <span className="sponsor-ad-tag">AD</span>
-          <div className="sponsor-ad-label">
-            <span>Sponsor space</span>
-            <span className="sponsor-ad-pill">Responsive banner</span>
-          </div>
-          <span className="sponsor-ad-tag">AD SPACE</span>
-        </section>
-
-        {/* ============================================================
             BOTTOM SITE FOOTER
             ============================================================ */}
         <footer className="site-footer-bar">
@@ -1212,7 +1246,7 @@ export default function HansWYFileArchiveApp() {
       </main>
 
       {/* ============================================================
-          3. MODALS (DISCLAIMER, CHANGELOG, LOGIN, FOLDER, UPLOAD)
+          3. MODALS (DISCLAIMER, CHANGELOG, LOGIN, FOLDER, UPLOAD, SUPPORT QRIS)
           ============================================================ */}
 
       {/* BEFORE YOU DOWNLOAD / DISCLAIMER MODAL */}
@@ -1241,10 +1275,6 @@ export default function HansWYFileArchiveApp() {
               <p>
                 Modified apps may cause crashes or account restrictions. Security and compatibility are not guaranteed.
               </p>
-            </div>
-
-            <div className="modal-note-box">
-              Areas marked AD contain sponsored content. Download buttons appear in file rows or file details.
             </div>
 
             <button
@@ -1282,7 +1312,8 @@ export default function HansWYFileArchiveApp() {
                 <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
                   • Pembaruan tampilan HansWY File Archive bertema Cosmic Electric Cyan.
                   <br />• Integrasi auto-play video animasi banner.
-                  <br />• Fitur pencarian folder & file langsung.
+                  <br />• Dukungan QRIS nasional untuk donasi pengembang.
+                  <br />• Fitur toggle tema Cosmic Cyan vs Mode Minimalis.
                 </p>
               </div>
 
@@ -1290,7 +1321,7 @@ export default function HansWYFileArchiveApp() {
                 <b style={{ color: '#ffffff' }}>14 Oct 2026 - 14:34 WIB</b>
                 <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
                   • Initial release HansWY Launcher & Tools package.
-                  <br />• Pembaruan kompabilitas Android 10-13.
+                  <br />• Pembaruan kompatibilitas Android 10-13.
                 </p>
               </div>
             </div>
@@ -1301,6 +1332,93 @@ export default function HansWYFileArchiveApp() {
             >
               Tutup Catatan
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* SUPPORT HANSWY - QRIS MODAL (PROFESSIONAL TEMPLATE) */}
+      {showSupportModal && (
+        <div className="modal-overlay" onClick={() => setShowSupportModal(false)}>
+          <div className="modal-dialog-hanswy modal-support-wide" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-hanswy" style={{ textAlign: 'left' }}>
+              <div>
+                <div className="modal-pretitle">DONASI & DUKUNGAN</div>
+                <h3 className="modal-title-hanswy">
+                  Support HansWY<span className="accent-dot">.</span>
+                </h3>
+              </div>
+              <button
+                className="modal-close-btn"
+                onClick={() => setShowSupportModal(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', textAlign: 'left', lineHeight: '1.5', marginBottom: '10px' }}>
+              Dukungan sukarela Anda sangat berharga untuk pemeliharaan server berkecepatan tinggi, update berkala aplikasi APK, dan infrastruktur penyimpanan cloud gratis.
+            </p>
+
+            {/* QRIS White Card Container */}
+            <div className="qris-card-wrapper">
+              <img
+                src="/qris.png"
+                alt="QRIS HansWY - HAIDRINK.IND"
+                className="qris-display-img"
+              />
+
+              <div className="qris-merchant-badge">
+                <span className="qris-merchant-name">HAIDRINK.IND</span>
+                <div className="qris-merchant-nmid">
+                  <span>NMID: ID1023272477176</span>
+                  <button
+                    type="button"
+                    className="qris-copy-nmid-btn"
+                    onClick={copyNmid}
+                    title="Salin NMID"
+                  >
+                    <Copy size={11} />
+                    <span>Salin</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Panduan Pembayaran */}
+            <div className="qris-support-steps">
+              <div className="qris-step-item">
+                <span className="qris-step-num">1</span>
+                <span>Buka aplikasi m-Banking (BCA, Mandiri, BRI, dll) atau e-Wallet (GoPay, OVO, Dana, ShopeePay).</span>
+              </div>
+              <div className="qris-step-item">
+                <span className="qris-step-num">2</span>
+                <span>Pilih menu <b>Scan QRIS</b> dan arahkan kamera ke barcode di atas (atau pilih dari galeri).</span>
+              </div>
+              <div className="qris-step-item">
+                <span className="qris-step-num">3</span>
+                <span>Masukkan nominal dukungan seikhlasnya lalu selesaikan pembayaran. Terima kasih banyak atas apresiasi Anda! ❤️</span>
+              </div>
+            </div>
+
+            {/* Aksi Modal Support */}
+            <div className="qris-actions-row">
+              <a
+                href="/qris.png"
+                download="QRIS-HansWY-HAIDRINK.png"
+                className="btn-qris-download"
+              >
+                <Download size={14} />
+                <span>Unduh Gambar QRIS</span>
+              </a>
+              <button
+                type="button"
+                className="btn-hanswy-primary"
+                style={{ flex: 1, padding: '10px 14px' }}
+                onClick={() => setShowSupportModal(false)}
+              >
+                Selesai
+              </button>
+            </div>
           </div>
         </div>
       )}
