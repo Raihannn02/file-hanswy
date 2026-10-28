@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Zetsu - File Archive | Download Center',
-  description: 'Zetsu File Archive - APKs, tools, and selected Zetsu releases.',
+  title: 'HansWY - File Archive | Download Center',
+  description: 'The HansWY Collection - APKs, tools, and selected HansWY releases.',
 };
 
 export default function RootLayout({

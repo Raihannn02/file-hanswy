@@ -9,7 +9,6 @@ import {
   RotateCw,
   Plus,
   Upload,
-  ChevronRight,
   ChevronDown,
   ArrowLeft,
   Trash2,
@@ -26,10 +25,8 @@ import {
   Music,
   Video,
   Image as ImageIcon,
-  Files,
   Clock,
   Search,
-  ExternalLink,
   Sun,
   Heart,
   MessageSquare,
@@ -60,7 +57,7 @@ interface UploadQueueItem {
 }
 
 // Helper to safely parse JSON from fetch response
-async function safeParseJson(res: Response): Promise<{ success: boolean;[key: string]: unknown }> {
+async function safeParseJson(res: Response): Promise<{ success: boolean; [key: string]: unknown }> {
   const text = await res.text();
   try {
     return JSON.parse(text);
@@ -73,7 +70,7 @@ async function safeParseJson(res: Response): Promise<{ success: boolean;[key: st
   }
 }
 
-export default function ZetsuFileArchiveApp() {
+export default function HansWYFileArchiveApp() {
   // Navigation & State
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [currentFolder, setCurrentFolder] = useState<FolderItem | null>(null);
@@ -179,7 +176,6 @@ export default function ZetsuFileArchiveApp() {
           };
           setCurrentFolder(d.currentFolder);
 
-          // Format breadcrumbs: Root displays as "Files"
           const formattedBreadcrumbs = (d.breadcrumbs || []).map((b, idx) => ({
             ...b,
             name: idx === 0 ? 'Files' : b.name,
@@ -253,7 +249,7 @@ export default function ZetsuFileArchiveApp() {
         setUser(data.user as UserInfo);
         setShowLoginModal(false);
         setAdminPasswordInput('');
-        showToast('Login berhasil sebagai Admin Zetsu ✓', 'success');
+        showToast('Login berhasil sebagai HansWY (Admin) ✓', 'success');
       } else {
         setAuthError((data.error as string) || 'Password salah');
       }
@@ -364,8 +360,8 @@ export default function ZetsuFileArchiveApp() {
       const dlUrl = file.is_chunked
         ? `/api/download/${file.id}`
         : file.download_url.startsWith('http')
-          ? file.download_url
-          : `${window.location.origin}${file.download_url}`;
+        ? file.download_url
+        : `${window.location.origin}${file.download_url}`;
 
       const a = document.createElement('a');
       a.href = dlUrl;
@@ -551,8 +547,8 @@ export default function ZetsuFileArchiveApp() {
           const dlUrl = target.is_chunked
             ? `/api/download/${target.id}`
             : target.download_url.startsWith('http')
-              ? target.download_url
-              : `${window.location.origin}${target.download_url}`;
+            ? target.download_url
+            : `${window.location.origin}${target.download_url}`;
 
           const a = document.createElement('a');
           a.href = dlUrl;
@@ -631,8 +627,6 @@ export default function ZetsuFileArchiveApp() {
   const totalVisibleItems = filteredFolders.length + filteredFiles.length;
   const queuedCount = uploadQueue.filter((i) => i.status === 'queued').length;
   const successCount = uploadQueue.filter((i) => i.status === 'success').length;
-  const errorCount = uploadQueue.filter((i) => i.status === 'error').length;
-  const uploadingCount = uploadQueue.filter((i) => i.status === 'uploading').length;
 
   return (
     <div className="app-container">
@@ -646,21 +640,21 @@ export default function ZetsuFileArchiveApp() {
       </button>
 
       {/* ============================================================
-          1. LEFT SIDEBAR (ZETSU STYLE)
+          1. LEFT SIDEBAR (HANSWY STYLE)
           ============================================================ */}
       <aside className={`sidebar ${mobileSidebarOpen ? 'open' : ''}`}>
         {/* Brand Header */}
         <div
-          className="brand-section-zetsu"
+          className="brand-section-hanswy"
           onClick={() => {
             navigateToFolder(null);
             setMobileSidebarOpen(false);
           }}
         >
-          <div className="brand-logo-z">Z</div>
+          <div className="brand-logo-h">H</div>
           <div className="brand-text-block">
-            <h1 className="brand-title-zetsu">Zetsu</h1>
-            <span className="brand-subtitle-zetsu">FILE ARCHIVE</span>
+            <h1 className="brand-title-hanswy">HansWY</h1>
+            <span className="brand-subtitle-hanswy">FILE ARCHIVE</span>
           </div>
         </div>
 
@@ -670,14 +664,14 @@ export default function ZetsuFileArchiveApp() {
 
           {/* All files */}
           <button
-            className={`nav-item-zetsu ${currentFolderId === null ? 'active' : ''}`}
+            className={`nav-item-hanswy ${currentFolderId === null ? 'active' : ''}`}
             onClick={() => {
               navigateToFolder(null);
               setMobileSidebarOpen(false);
             }}
           >
             <div className="nav-item-content">
-              <Folder size={17} color={currentFolderId === null ? 'var(--accent-red)' : '#858b98'} />
+              <Folder size={17} color={currentFolderId === null ? 'var(--accent-cyan)' : '#8591a5'} />
               <span>All files</span>
             </div>
             {currentFolderId === null && <span className="nav-arrow-active">↗</span>}
@@ -685,14 +679,14 @@ export default function ZetsuFileArchiveApp() {
 
           {/* Changelog */}
           <button
-            className="nav-item-zetsu"
+            className="nav-item-hanswy"
             onClick={() => {
               setShowChangelogModal(true);
               setMobileSidebarOpen(false);
             }}
           >
             <div className="nav-item-content">
-              <Clock size={17} color="#858b98" />
+              <Clock size={17} color="#8591a5" />
               <span>Changelog</span>
             </div>
           </button>
@@ -704,25 +698,25 @@ export default function ZetsuFileArchiveApp() {
             href="https://discord.com"
             target="_blank"
             rel="noopener noreferrer"
-            className="nav-item-zetsu"
+            className="nav-item-hanswy"
           >
             <div className="nav-item-content">
-              <MessageSquare size={17} color="#858b98" />
+              <MessageSquare size={17} color="#8591a5" />
               <span>Discord</span>
             </div>
             <span className="nav-arrow-external">↗</span>
           </a>
 
-          {/* Support Zetsu */}
+          {/* Support HansWY */}
           <a
             href="https://saweria.co"
             target="_blank"
             rel="noopener noreferrer"
-            className="nav-item-zetsu"
+            className="nav-item-hanswy"
           >
             <div className="nav-item-content">
-              <Heart size={17} color="#858b98" />
-              <span>Support Zetsu</span>
+              <Heart size={17} color="#8591a5" />
+              <span>Support HansWY</span>
             </div>
             <span className="nav-arrow-external">↗</span>
           </a>
@@ -738,10 +732,10 @@ export default function ZetsuFileArchiveApp() {
               title="Akses Admin"
             >
               <div className="user-status-left">
-                <div className="user-avatar-badge">{user.role === 'admin' ? 'Z' : 'G'}</div>
-                <span className="user-name">{user.name}</span>
+                <div className="user-avatar-badge">{user.role === 'admin' ? 'H' : 'G'}</div>
+                <span className="user-name">{user.role === 'admin' ? 'HansWY (Admin)' : user.name}</span>
               </div>
-              <ChevronDown size={14} color="#727888" />
+              <ChevronDown size={14} color="#727f95" />
             </div>
 
             {showAuthDropdown && (
@@ -800,7 +794,7 @@ export default function ZetsuFileArchiveApp() {
           </div>
 
           <div className="sidebar-footer-text">Made for the grind.</div>
-          <div className="sidebar-footer-subtext">Zetsu Files</div>
+          <div className="sidebar-footer-subtext">HansWY Files</div>
         </div>
       </aside>
 
@@ -820,7 +814,7 @@ export default function ZetsuFileArchiveApp() {
             </span>
             {breadcrumbs.map((crumb, idx) => (
               <React.Fragment key={crumb.id || 'root'}>
-                {idx > 0 && <span style={{ color: '#555b6a' }}>/</span>}
+                {idx > 0 && <span style={{ color: '#556277' }}>/</span>}
                 <span
                   className={
                     idx === breadcrumbs.length - 1 ? 'breadcrumb-item-current' : 'breadcrumb-item-text'
@@ -834,11 +828,11 @@ export default function ZetsuFileArchiveApp() {
           </div>
 
           <div className="top-nav-right">
-            <span className="top-badge-title">ZETSU / DOWNLOAD CENTER</span>
+            <span className="top-badge-title">HANSWY / DOWNLOAD CENTER</span>
             <button
               className="theme-toggle-btn"
               title="Theme Toggle"
-              onClick={() => showToast('Tema Zetsu Dark Aktif', 'info')}
+              onClick={() => showToast('Tema HansWY Cosmic Cyan Aktif', 'info')}
             >
               <Sun size={17} />
             </button>
@@ -849,8 +843,8 @@ export default function ZetsuFileArchiveApp() {
         {schemaMissing && (
           <div
             style={{
-              backgroundColor: 'rgba(207, 60, 44, 0.1)',
-              border: '1px solid var(--accent-red)',
+              backgroundColor: 'rgba(0, 210, 255, 0.08)',
+              border: '1px solid var(--accent-cyan)',
               borderRadius: 'var(--radius-md)',
               padding: '14px 18px',
               marginBottom: '18px',
@@ -859,7 +853,7 @@ export default function ZetsuFileArchiveApp() {
               gap: '12px',
             }}
           >
-            <AlertCircle size={20} color="var(--accent-red)" style={{ flexShrink: 0, marginTop: '2px' }} />
+            <AlertCircle size={20} color="var(--accent-cyan)" style={{ flexShrink: 0, marginTop: '2px' }} />
             <div style={{ flex: 1 }}>
               <h4 style={{ color: '#ffffff', fontSize: '0.92rem', fontWeight: 700, marginBottom: '4px' }}>
                 GitHub Storage Belum Dikonfigurasi
@@ -1018,7 +1012,7 @@ export default function ZetsuFileArchiveApp() {
         {loading && (
           <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-secondary)' }}>
             <RotateCw size={28} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 12px' }} />
-            <p style={{ fontSize: '0.85rem' }}>Memuat direktori Zetsu Archive...</p>
+            <p style={{ fontSize: '0.85rem' }}>Memuat direktori HansWY Archive...</p>
           </div>
         )}
 
@@ -1117,7 +1111,7 @@ export default function ZetsuFileArchiveApp() {
                       <span className="item-row-title" title={file.name}>
                         {file.name}
                       </span>
-                      <span style={{ fontSize: '0.74rem', color: '#656b7c', fontFamily: 'var(--font-mono)' }}>
+                      <span style={{ fontSize: '0.74rem', color: '#74829a', fontFamily: 'var(--font-mono)' }}>
                         {formatFileSize(file.size)}
                       </span>
                     </div>
@@ -1204,8 +1198,8 @@ export default function ZetsuFileArchiveApp() {
             ============================================================ */}
         <footer className="site-footer-bar">
           <div className="site-footer-brand">
-            <span className="footer-brand-name">ZETSU</span>
-            <span style={{ color: '#888e9d' }}>FILES</span>
+            <span className="footer-brand-name">HANSWY</span>
+            <span style={{ color: '#8897ad' }}>FILES</span>
             <span className="footer-brand-tagline">Pick a folder. Find your version.</span>
           </div>
           <span
@@ -1221,14 +1215,14 @@ export default function ZetsuFileArchiveApp() {
           3. MODALS (DISCLAIMER, CHANGELOG, LOGIN, FOLDER, UPLOAD)
           ============================================================ */}
 
-      {/* BEFORE YOU DOWNLOAD / DISCLAIMER MODAL (GAMBAR 1) */}
+      {/* BEFORE YOU DOWNLOAD / DISCLAIMER MODAL */}
       {showDisclaimerModal && (
         <div className="modal-overlay" onClick={() => setShowDisclaimerModal(false)}>
-          <div className="modal-dialog-zetsu" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header-zetsu">
+          <div className="modal-dialog-hanswy" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-hanswy">
               <div>
                 <div className="modal-pretitle">BEFORE YOU DOWNLOAD</div>
-                <h3 className="modal-title-zetsu">
+                <h3 className="modal-title-hanswy">
                   Use at your own risk<span className="accent-dot">.</span>
                 </h3>
               </div>
@@ -1254,7 +1248,7 @@ export default function ZetsuFileArchiveApp() {
             </div>
 
             <button
-              className="btn-zetsu-primary"
+              className="btn-hanswy-primary"
               onClick={() => setShowDisclaimerModal(false)}
             >
               I understand
@@ -1266,12 +1260,12 @@ export default function ZetsuFileArchiveApp() {
       {/* CHANGELOG NOTES MODAL */}
       {showChangelogModal && (
         <div className="modal-overlay" onClick={() => setShowChangelogModal(false)}>
-          <div className="modal-dialog-zetsu" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header-zetsu">
+          <div className="modal-dialog-hanswy" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-hanswy">
               <div>
                 <div className="modal-pretitle">CHANGELOG ARCHIVE</div>
-                <h3 className="modal-title-zetsu">
-                  Release Notes<span className="accent-dot">.</span>
+                <h3 className="modal-title-hanswy">
+                  HansWY Release Notes<span className="accent-dot">.</span>
                 </h3>
               </div>
               <button
@@ -1283,26 +1277,26 @@ export default function ZetsuFileArchiveApp() {
             </div>
 
             <div className="modal-text-body" style={{ maxHeight: '320px', overflowY: 'auto' }}>
-              <div style={{ borderLeft: '2px solid var(--accent-red)', paddingLeft: '12px', marginBottom: '14px' }}>
+              <div style={{ borderLeft: '2px solid var(--accent-cyan)', paddingLeft: '12px', marginBottom: '14px' }}>
                 <b style={{ color: '#ffffff' }}>23 Oct 2026 - 21:00 WIB</b>
                 <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
-                  • Pembaruan tampilan Zetsu File Archive dengan warna tema banner animasi.
-                  <br />• Integrasi auto-play video banner tanpa tombol play.
+                  • Pembaruan tampilan HansWY File Archive bertema Cosmic Electric Cyan.
+                  <br />• Integrasi auto-play video animasi banner.
                   <br />• Fitur pencarian folder & file langsung.
                 </p>
               </div>
 
-              <div style={{ borderLeft: '2px solid #2d303d', paddingLeft: '12px', marginBottom: '14px' }}>
+              <div style={{ borderLeft: '2px solid #202b3f', paddingLeft: '12px', marginBottom: '14px' }}>
                 <b style={{ color: '#ffffff' }}>14 Oct 2026 - 14:34 WIB</b>
                 <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
-                  • Initial release Zetsu Launcher & Tools package.
+                  • Initial release HansWY Launcher & Tools package.
                   <br />• Pembaruan kompabilitas Android 10-13.
                 </p>
               </div>
             </div>
 
             <button
-              className="btn-zetsu-primary"
+              className="btn-hanswy-primary"
               onClick={() => setShowChangelogModal(false)}
             >
               Tutup Catatan
@@ -1314,12 +1308,12 @@ export default function ZetsuFileArchiveApp() {
       {/* ADMIN LOGIN MODAL */}
       {showLoginModal && (
         <div className="modal-overlay" onClick={() => setShowLoginModal(false)}>
-          <div className="modal-dialog-zetsu" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header-zetsu">
+          <div className="modal-dialog-hanswy" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-hanswy">
               <div>
                 <div className="modal-pretitle">AUTHENTICATION</div>
-                <h3 className="modal-title-zetsu">
-                  Login Admin Zetsu<span className="accent-dot">.</span>
+                <h3 className="modal-title-hanswy">
+                  Login Admin HansWY<span className="accent-dot">.</span>
                 </h3>
               </div>
               <button
@@ -1339,8 +1333,8 @@ export default function ZetsuFileArchiveApp() {
                   <div
                     style={{
                       padding: '8px 12px',
-                      backgroundColor: 'rgba(207, 60, 44, 0.15)',
-                      border: '1px solid var(--accent-red)',
+                      backgroundColor: 'rgba(255, 82, 82, 0.15)',
+                      border: '1px solid #ff5252',
                       borderRadius: 'var(--radius-sm)',
                       color: '#ff6b75',
                       fontSize: '0.82rem',
@@ -1386,11 +1380,11 @@ export default function ZetsuFileArchiveApp() {
       {/* CREATE FOLDER MODAL */}
       {showCreateFolderModal && (
         <div className="modal-overlay" onClick={() => !creatingFolder && setShowCreateFolderModal(false)}>
-          <div className="modal-dialog-zetsu" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header-zetsu">
+          <div className="modal-dialog-hanswy" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-hanswy">
               <div>
                 <div className="modal-pretitle">MANAGEMENT</div>
-                <h3 className="modal-title-zetsu">
+                <h3 className="modal-title-hanswy">
                   Buat Folder Baru<span className="accent-dot">.</span>
                 </h3>
               </div>
@@ -1408,7 +1402,7 @@ export default function ZetsuFileArchiveApp() {
                 <input
                   type="text"
                   className="form-input"
-                  placeholder="Contoh: LAUNCHER, TOOLS, DELTA..."
+                  placeholder="Contoh: LAUNCHER, TOOLS, ARCEUS..."
                   value={newFolderName}
                   onChange={(e) => setNewFolderName(e.target.value)}
                   autoFocus
@@ -1447,11 +1441,11 @@ export default function ZetsuFileArchiveApp() {
       {/* RENAME MODAL */}
       {renameTarget && (
         <div className="modal-overlay" onClick={() => setRenameTarget(null)}>
-          <div className="modal-dialog-zetsu" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header-zetsu">
+          <div className="modal-dialog-hanswy" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-hanswy">
               <div>
                 <div className="modal-pretitle">MANAGEMENT</div>
-                <h3 className="modal-title-zetsu">
+                <h3 className="modal-title-hanswy">
                   Ubah Nama {renameTarget.type === 'folder' ? 'Folder' : 'File'}<span className="accent-dot">.</span>
                 </h3>
               </div>
@@ -1487,11 +1481,11 @@ export default function ZetsuFileArchiveApp() {
       {/* DELETE CONFIRMATION MODAL */}
       {deleteTarget && (
         <div className="modal-overlay" onClick={() => !deleting && setDeleteTarget(null)}>
-          <div className="modal-dialog-zetsu" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header-zetsu">
+          <div className="modal-dialog-hanswy" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-hanswy">
               <div>
                 <div className="modal-pretitle">DELETE CONFIRMATION</div>
-                <h3 className="modal-title-zetsu">
+                <h3 className="modal-title-hanswy">
                   Hapus {deleteTarget.type === 'folder' ? 'Folder' : 'File'}<span className="accent-dot">?</span>
                 </h3>
               </div>
@@ -1532,11 +1526,11 @@ export default function ZetsuFileArchiveApp() {
       {/* BULK UPLOAD MODAL */}
       {showUploadModal && (
         <div className="modal-overlay" onClick={closeUploadModal}>
-          <div className="modal-dialog-zetsu upload-modal-wide" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header-zetsu">
+          <div className="modal-dialog-hanswy upload-modal-wide" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-hanswy">
               <div>
                 <div className="modal-pretitle">FILE STORAGE</div>
-                <h3 className="modal-title-zetsu">
+                <h3 className="modal-title-hanswy">
                   Upload File<span className="accent-dot">.</span>
                 </h3>
               </div>
@@ -1546,7 +1540,7 @@ export default function ZetsuFileArchiveApp() {
             </div>
 
             <div className="drop-zone" onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop} onClick={() => !isProcessingQueue && bulkFileInputRef.current?.click()}>
-              <Upload size={28} color={isDragOver ? 'var(--accent-red)' : 'var(--text-muted)'} style={{ margin: '0 auto 8px', display: 'block' }} />
+              <Upload size={28} color={isDragOver ? 'var(--accent-cyan)' : 'var(--text-muted)'} style={{ margin: '0 auto 8px', display: 'block' }} />
               <p style={{ fontWeight: 600, color: '#ffffff', marginBottom: '2px', fontSize: '0.9rem' }}>
                 Seret & lepas file ke sini
               </p>
@@ -1575,11 +1569,11 @@ export default function ZetsuFileArchiveApp() {
                         <span className="queue-filename">{item.file.name}</span>
                         <span className="queue-filesize">{formatFileSize(item.file.size)}</span>
                       </div>
-                      {item.status === 'uploading' && <span style={{ fontSize: '0.72rem', color: 'var(--accent-red)' }}>{item.progress}%</span>}
+                      {item.status === 'uploading' && <span style={{ fontSize: '0.72rem', color: 'var(--accent-cyan)' }}>{item.progress}%</span>}
                       {item.status === 'success' && <Check size={14} color="#52e38c" />}
                       {item.status === 'error' && <span style={{ fontSize: '0.72rem', color: '#ff6b75' }}>Gagal</span>}
                       {item.status === 'queued' && !isProcessingQueue && (
-                        <button onClick={() => removeFromQueue(item.id)} style={{ color: '#656b7c' }}>
+                        <button onClick={() => removeFromQueue(item.id)} style={{ color: '#65728a' }}>
                           <X size={13} />
                         </button>
                       )}
@@ -1611,12 +1605,12 @@ export default function ZetsuFileArchiveApp() {
       {/* AUTO DOWNLOAD POPUP MODAL */}
       {autoDownloadFile && (
         <div className="modal-overlay" onClick={() => setAutoDownloadFile(null)}>
-          <div className="modal-dialog-zetsu" onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center' }}>
-            <div className="modal-header-zetsu" style={{ justifyContent: 'center' }}>
-              <h3 className="modal-title-zetsu">Unduhan File Zetsu</h3>
+          <div className="modal-dialog-hanswy" onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center' }}>
+            <div className="modal-header-hanswy" style={{ justifyContent: 'center' }}>
+              <h3 className="modal-title-hanswy">Unduhan File HansWY</h3>
             </div>
             <div style={{ margin: '16px 0' }}>
-              <Download size={36} color="var(--accent-red)" style={{ margin: '0 auto 12px' }} />
+              <Download size={36} color="var(--accent-cyan)" style={{ margin: '0 auto 12px' }} />
               <h4 style={{ color: '#ffffff', fontSize: '1rem', marginBottom: '6px' }}>{autoDownloadFile.name}</h4>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.84rem' }}>
                 Ukuran: {formatFileSize(autoDownloadFile.size)}
@@ -1625,7 +1619,7 @@ export default function ZetsuFileArchiveApp() {
             <a
               href={autoDownloadFile.is_chunked ? `/api/download/${autoDownloadFile.id}` : autoDownloadFile.download_url}
               download={autoDownloadFile.name}
-              className="btn-zetsu-primary"
+              className="btn-hanswy-primary"
             >
               Unduh Lagi Sekarang
             </a>
@@ -1638,8 +1632,8 @@ export default function ZetsuFileArchiveApp() {
         {toasts.map((toast) => (
           <div key={toast.id} className={`toast ${toast.type}`}>
             {toast.type === 'success' && <Check size={16} color="#52e38c" />}
-            {toast.type === 'error' && <AlertCircle size={16} color="#cf3c2c" />}
-            {toast.type === 'info' && <Clock size={16} color="#eab308" />}
+            {toast.type === 'error' && <AlertCircle size={16} color="#ff5252" />}
+            {toast.type === 'info' && <Clock size={16} color="var(--accent-cyan)" />}
             <span>{toast.text}</span>
           </div>
         ))}

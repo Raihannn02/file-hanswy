@@ -58,7 +58,7 @@ function getInitialSeedData(): LocalDatabase {
   const files: FileItem[] = [
     {
       id: 'file-apk-01',
-      name: 'ZETSU LAUNCHER 01-2.742.1059.apk',
+      name: 'HANSWY LAUNCHER 01-2.742.1059.apk',
       folder_id: rootLauncherId,
       size: 108991283,
       mime_type: 'application/vnd.android.package-archive',
