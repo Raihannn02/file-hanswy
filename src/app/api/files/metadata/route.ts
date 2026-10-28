@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/lib/auth';
-import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { isGitHubConfigured, ghSaveFileMetadata } from '@/lib/github-storage';
 
 function safeJson(data: object, status = 200) {
   return new NextResponse(JSON.stringify(data), {
@@ -11,9 +11,8 @@ function safeJson(data: object, status = 200) {
 
 /**
  * POST /api/files/metadata
- * Menyimpan metadata file ke database setelah file berhasil diupload
- * langsung ke Supabase Storage dari browser (client-side upload).
- * Request body yang dikirim sangat kecil (hanya JSON metadata).
+ * Menyimpan metadata file ke database (db.json release asset) setelah file berhasil diupload
+ * langsung ke GitHub Release Asset dari browser (client-side upload).
  */
 export async function POST(req: NextRequest) {
   try {
@@ -31,6 +30,7 @@ export async function POST(req: NextRequest) {
       mimeType?: string;
       storagePath?: string;
       downloadUrl?: string;
+      githubAssetId?: number;
     };
 
     try {
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
       return safeJson({ success: false, error: 'Request body harus berformat JSON.' }, 400);
     }
 
-    const { name, folderId, size, mimeType, storagePath, downloadUrl } = body;
+    const { name, folderId, size, mimeType, storagePath, downloadUrl, githubAssetId } = body;
 
     if (!name || !storagePath || !downloadUrl || size === undefined) {
       return safeJson(
@@ -50,35 +50,22 @@ export async function POST(req: NextRequest) {
 
     const actualFolderId = !folderId || folderId === 'root' ? null : folderId;
 
-    // Simpan ke Supabase Database
-    if (isSupabaseConfigured && supabase) {
-      const { data: fileRecord, error: dbError } = await supabase
-        .from('files')
-        .insert({
-          name,
-          folder_id: actualFolderId,
-          size,
-          mime_type: mimeType || 'application/octet-stream',
-          storage_path: storagePath,
-          download_url: downloadUrl,
-        })
-        .select()
-        .single();
-
-      if (dbError) {
-        console.error('[POST /api/files/metadata] DB error:', dbError.message);
-        return safeJson(
-          { success: false, error: `Gagal menyimpan metadata file: ${dbError.message}` },
-          500
-        );
-      }
+    if (isGitHubConfigured) {
+      const fileRecord = await ghSaveFileMetadata({
+        name,
+        folderId: actualFolderId,
+        size,
+        mimeType: mimeType || 'application/octet-stream',
+        storagePath,
+        downloadUrl,
+        githubAssetId,
+      });
 
       return safeJson({ success: true, data: fileRecord });
     }
 
-    // Fallback: local storage (tidak perlu aksi karena client-side upload tidak bisa local)
     return safeJson(
-      { success: false, error: 'Supabase tidak terkonfigurasi. Upload langsung hanya tersedia dengan Supabase.' },
+      { success: false, error: 'GitHub Storage tidak terkonfigurasi di server.' },
       500
     );
   } catch (err) {

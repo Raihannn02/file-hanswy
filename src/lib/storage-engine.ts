@@ -1,7 +1,17 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { supabase, isSupabaseConfigured, STORAGE_BUCKET } from './supabase';
+import {
+  isGitHubConfigured,
+  ghGetFolderContents,
+  ghCreateFolder,
+  ghRenameFolder,
+  ghDeleteFolder,
+  ghUploadFileRecord,
+  ghRenameFile,
+  ghDeleteFile,
+  ghGetFile,
+} from './github-storage';
 import { FolderItem, FileItem, FolderContentsResponse, BreadcrumbItem } from './types';
 
 interface LocalDatabase {
@@ -111,132 +121,16 @@ function writeLocalDb(data: LocalDatabase) {
 export async function getFolderContents(
   targetFolderId: string | null = null
 ): Promise<FolderContentsResponse> {
-  const isCloud = isSupabaseConfigured && supabase !== null;
-
-  if (isCloud && supabase) {
+  if (isGitHubConfigured) {
     try {
-      // 1. Get current folder info if not root
-      let currentFolder: FolderItem | null = null;
-      if (targetFolderId && targetFolderId !== 'root') {
-        const { data: folderData, error: folderErr } = await supabase
-          .from('folders')
-          .select('*')
-          .eq('id', targetFolderId)
-          .single();
-
-        if (folderErr) {
-          if (folderErr.code === 'PGRST205' || folderErr.message?.includes('Could not find the table')) {
-            return {
-              currentFolder: null,
-              breadcrumbs: [{ id: null, name: 'Root' }],
-              folders: [],
-              files: [],
-              totalItems: 0,
-              isCloudStorage: true,
-              schemaMissing: true,
-              errorMessage: "Tabel 'folders' belum dibuat di Supabase. Silakan jalankan file supabase-schema.sql di Supabase SQL Editor.",
-            };
-          }
-          throw new Error(`Gagal memuat folder: ${folderErr.message}`);
-        }
-        currentFolder = folderData;
-      }
-
-      // 2. Build breadcrumbs
-      const breadcrumbs: BreadcrumbItem[] = [{ id: null, name: 'Root' }];
-      if (currentFolder) {
-        const trail: BreadcrumbItem[] = [{ id: currentFolder.id, name: currentFolder.name }];
-        let currParent = currentFolder.parent_id;
-        while (currParent) {
-          const { data: parentFolder } = await supabase
-            .from('folders')
-            .select('id, name, parent_id')
-            .eq('id', currParent)
-            .single();
-          if (parentFolder) {
-            trail.unshift({ id: parentFolder.id, name: parentFolder.name });
-            currParent = parentFolder.parent_id;
-          } else {
-            break;
-          }
-        }
-        breadcrumbs.push(...trail);
-      }
-
-      // 3. Fetch subfolders
-      const folderQuery = supabase.from('folders').select('*').order('name');
-      if (!targetFolderId || targetFolderId === 'root') {
-        folderQuery.is('parent_id', null);
-      } else {
-        folderQuery.eq('parent_id', targetFolderId);
-      }
-
-      const { data: foldersData, error: foldersErr } = await folderQuery;
-      if (foldersErr) {
-        if (foldersErr.code === 'PGRST205' || foldersErr.message?.includes('Could not find the table')) {
-          return {
-            currentFolder: null,
-            breadcrumbs: [{ id: null, name: 'Root' }],
-            folders: [],
-            files: [],
-            totalItems: 0,
-            isCloudStorage: true,
-            schemaMissing: true,
-            errorMessage: "Tabel 'folders' belum dibuat di Supabase. Silakan jalankan file supabase-schema.sql di Supabase SQL Editor.",
-          };
-        }
-        throw new Error(`Gagal memuat daftar subfolder: ${foldersErr.message}`);
-      }
-
-      const folders: FolderItem[] = foldersData || [];
-
-      // Calculate item_count for each subfolder
-      for (const f of folders) {
-        const { count: subFolderCount } = await supabase
-          .from('folders')
-          .select('id', { count: 'exact', head: true })
-          .eq('parent_id', f.id);
-        const { count: fileCount } = await supabase
-          .from('files')
-          .select('id', { count: 'exact', head: true })
-          .eq('folder_id', f.id);
-        f.item_count = (subFolderCount || 0) + (fileCount || 0);
-      }
-
-      // 4. Fetch files in current folder
-      let files: FileItem[] = [];
-      const fileQuery = supabase.from('files').select('*').order('name');
-      if (targetFolderId && targetFolderId !== 'root') {
-        fileQuery.eq('folder_id', targetFolderId);
-      } else {
-        fileQuery.is('folder_id', null);
-      }
-
-      const { data: filesData, error: filesErr } = await fileQuery;
-      if (filesErr) {
-        console.warn('Gagal memuat files:', filesErr.message);
-      } else {
-        files = filesData || [];
-      }
-
-      const totalItems = folders.length + files.length;
-
-      return {
-        currentFolder,
-        breadcrumbs,
-        folders,
-        files,
-        totalItems,
-        isCloudStorage: true,
-        schemaMissing: false,
-      };
+      return await ghGetFolderContents(targetFolderId);
     } catch (err) {
-      console.error('Supabase query error:', err);
+      console.error('GitHub storage getFolderContents error:', err);
       throw err;
     }
   }
 
-  // Fallback to Local Store when Supabase is not configured
+  // Fallback to Local Store when GitHub is not configured
   const db = readLocalDb();
   const actualFolderId = !targetFolderId || targetFolderId === 'root' ? null : targetFolderId;
 
@@ -293,26 +187,9 @@ export async function createFolder(
   if (!trimmedName) throw new Error('Nama folder tidak boleh kosong');
 
   const actualParentId = !parentId || parentId === 'root' ? null : parentId;
-  const isCloud = isSupabaseConfigured && supabase !== null;
 
-  if (isCloud && supabase) {
-    const { data, error } = await supabase
-      .from('folders')
-      .insert({
-        name: trimmedName,
-        parent_id: actualParentId,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      if (error.code === 'PGRST205' || error.message?.includes('Could not find the table')) {
-        throw new Error("Tabel 'folders' belum dibuat di Supabase. Silakan jalankan skrip supabase-schema.sql di SQL Editor Supabase terlebih dahulu.");
-      }
-      throw new Error(`Gagal membuat folder di Supabase: ${error.message}`);
-    }
-
-    return data;
+  if (isGitHubConfigured) {
+    return await ghCreateFolder(trimmedName, actualParentId);
   }
 
   // Local store
@@ -335,19 +212,8 @@ export async function renameFolder(folderId: string, newName: string): Promise<F
   const trimmedName = newName.trim();
   if (!trimmedName) throw new Error('Nama folder baru tidak boleh kosong');
 
-  const isCloud = isSupabaseConfigured && supabase !== null;
-  if (isCloud && supabase) {
-    const { data, error } = await supabase
-      .from('folders')
-      .update({ name: trimmedName, updated_at: new Date().toISOString() })
-      .eq('id', folderId)
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(`Gagal mengubah nama folder di Supabase: ${error.message}`);
-    }
-    return data;
+  if (isGitHubConfigured) {
+    return await ghRenameFolder(folderId, trimmedName);
   }
 
   const db = readLocalDb();
@@ -361,46 +227,8 @@ export async function renameFolder(folderId: string, newName: string): Promise<F
 }
 
 export async function deleteFolder(folderId: string): Promise<void> {
-  const isCloud = isSupabaseConfigured && supabase !== null;
-
-  if (isCloud && supabase) {
-    // 1. Delete files in folder from Supabase Storage
-    const { data: filesToDelete, error: fetchFilesErr } = await supabase
-      .from('files')
-      .select('storage_path, download_url')
-      .eq('folder_id', folderId);
-
-    if (fetchFilesErr && fetchFilesErr.code !== 'PGRST205') {
-      console.warn('Warning fetching files to delete:', fetchFilesErr.message);
-    }
-
-    if (filesToDelete && filesToDelete.length > 0) {
-      const paths: string[] = [];
-      for (const f of filesToDelete) {
-        if (f.storage_path) paths.push(f.storage_path);
-        if (f.download_url && f.download_url.startsWith('chunked:')) {
-          const parts = f.download_url.split(':');
-          const count = parseInt(parts[1], 10);
-          const basePath = parts.slice(2).join(':');
-          for (let i = 0; i < count; i++) {
-            paths.push(`${basePath}_part${i}`);
-          }
-        }
-      }
-      if (paths.length > 0) {
-        await supabase.storage.from(STORAGE_BUCKET).remove(paths);
-      }
-    }
-
-    // 2. Delete folder from Supabase Database
-    const { error: delErr } = await supabase.from('folders').delete().eq('id', folderId);
-    if (delErr) {
-      if (delErr.code === 'PGRST205' || delErr.message?.includes('Could not find the table')) {
-        throw new Error("Tabel 'folders' belum dibuat di Supabase. Silakan jalankan skrip supabase-schema.sql di SQL Editor Supabase terlebih dahulu.");
-      }
-      throw new Error(`Gagal menghapus folder dari Supabase: ${delErr.message}`);
-    }
-    return;
+  if (isGitHubConfigured) {
+    return await ghDeleteFolder(folderId);
   }
 
   // Local recursive delete
@@ -431,55 +259,15 @@ export async function uploadFileRecord(params: {
   mimeType: string;
   buffer: Buffer;
 }): Promise<FileItem> {
-  const { name, folderId, size, mimeType, buffer } = params;
-  const actualFolderId = !folderId || folderId === 'root' ? null : folderId;
-  const isCloud = isSupabaseConfigured && supabase !== null;
-
-  const sanitizedFileName = name.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const uniqueStorageKey = `${actualFolderId || 'root'}/${Date.now()}_${sanitizedFileName}`;
-
-  if (isCloud && supabase) {
-    // 1. Upload to Supabase Storage
-    const { error: uploadError } = await supabase.storage
-      .from(STORAGE_BUCKET)
-      .upload(uniqueStorageKey, buffer, {
-        contentType: mimeType,
-        upsert: true,
-      });
-
-    if (uploadError) {
-      throw new Error(`Upload Supabase Storage gagal: ${uploadError.message}. Pastikan bucket '${STORAGE_BUCKET}' sudah dibuat di Supabase.`);
-    }
-
-    // 2. Get public download URL
-    const { data: urlData } = supabase.storage
-      .from(STORAGE_BUCKET)
-      .getPublicUrl(uniqueStorageKey);
-
-    const downloadUrl = urlData.publicUrl;
-
-    // 3. Insert record into files table
-    const { data: fileRecord, error: dbError } = await supabase
-      .from('files')
-      .insert({
-        name,
-        folder_id: actualFolderId,
-        size,
-        mime_type: mimeType,
-        storage_path: uniqueStorageKey,
-        download_url: downloadUrl,
-      })
-      .select()
-      .single();
-
-    if (dbError) {
-      throw new Error(`Gagal menyimpan metadata file ke database Supabase: ${dbError.message}`);
-    }
-
-    return fileRecord;
+  if (isGitHubConfigured) {
+    return await ghUploadFileRecord(params);
   }
 
   // Local storage fallback
+  const { name, folderId, size, mimeType, buffer } = params;
+  const actualFolderId = !folderId || folderId === 'root' ? null : folderId;
+  const sanitizedFileName = name.replace(/[^a-zA-Z0-9._-]/g, '_');
+
   ensureLocalDirs();
   const localFileName = `${Date.now()}_${sanitizedFileName}`;
   const localFilePath = path.join(UPLOADS_DIR, localFileName);
@@ -507,19 +295,8 @@ export async function renameFile(fileId: string, newName: string): Promise<FileI
   const trimmedName = newName.trim();
   if (!trimmedName) throw new Error('Nama file baru tidak boleh kosong');
 
-  const isCloud = isSupabaseConfigured && supabase !== null;
-  if (isCloud && supabase) {
-    const { data, error } = await supabase
-      .from('files')
-      .update({ name: trimmedName, updated_at: new Date().toISOString() })
-      .eq('id', fileId)
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(`Gagal mengubah nama file di Supabase: ${error.message}`);
-    }
-    return data;
+  if (isGitHubConfigured) {
+    return await ghRenameFile(fileId, trimmedName);
   }
 
   const db = readLocalDb();
@@ -533,33 +310,8 @@ export async function renameFile(fileId: string, newName: string): Promise<FileI
 }
 
 export async function deleteFile(fileId: string): Promise<void> {
-  const isCloud = isSupabaseConfigured && supabase !== null;
-
-  if (isCloud && supabase) {
-    const { data: file } = await supabase
-      .from('files')
-      .select('storage_path, download_url')
-      .eq('id', fileId)
-      .single();
-
-    if (file?.storage_path) {
-      const pathsToDelete = [file.storage_path];
-      if (file.download_url && file.download_url.startsWith('chunked:')) {
-        const parts = file.download_url.split(':');
-        const count = parseInt(parts[1], 10);
-        const basePath = parts.slice(2).join(':');
-        for (let i = 0; i < count; i++) {
-          pathsToDelete.push(`${basePath}_part${i}`);
-        }
-      }
-      await supabase.storage.from(STORAGE_BUCKET).remove(pathsToDelete);
-    }
-
-    const { error } = await supabase.from('files').delete().eq('id', fileId);
-    if (error) {
-      throw new Error(`Gagal menghapus file dari Supabase: ${error.message}`);
-    }
-    return;
+  if (isGitHubConfigured) {
+    return await ghDeleteFile(fileId);
   }
 
   const db = readLocalDb();
@@ -579,19 +331,8 @@ export async function deleteFile(fileId: string): Promise<void> {
 }
 
 export async function getFile(fileId: string): Promise<FileItem | null> {
-  const isCloud = isSupabaseConfigured && supabase !== null;
-
-  if (isCloud && supabase) {
-    const { data: file, error } = await supabase
-      .from('files')
-      .select('*')
-      .eq('id', fileId)
-      .single();
-
-    if (error || !file) {
-      return null;
-    }
-    return file as FileItem;
+  if (isGitHubConfigured) {
+    return await ghGetFile(fileId);
   }
 
   const db = readLocalDb();

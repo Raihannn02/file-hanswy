@@ -33,7 +33,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { FolderItem, FileItem, BreadcrumbItem } from '@/lib/types';
-import { supabaseBrowser, isBrowserSupabaseReady, BROWSER_STORAGE_BUCKET } from '@/lib/supabase-browser';
+import { isBrowserGitHubReady, uploadFileToGitHubBrowser } from '@/lib/github-browser';
 
 interface UserInfo {
   name: string;
@@ -368,58 +368,22 @@ export default function FileHansWYApp() {
 
     try {
       // ================================================================
-      // STRATEGI: Upload langsung dari browser ke Supabase Storage
+      // STRATEGI: Upload langsung dari browser ke GitHub Releases API
       // Melewati Vercel API sepenuhnya → tidak ada batas 4.5MB Vercel
-      // Supabase Free Tier: 50MB per file, 1GB total storage
+      // GitHub Releases: Mendukung hingga 2GB per file tanpa batas bandwidth
       // ================================================================
 
-      if (isBrowserSupabaseReady && supabaseBrowser) {
-        // -- JALUR 1: Direct Supabase Upload (untuk cloud mode) --
-        const sanitizedName = item.file.name.replace(/[^a-zA-Z0-9._\-\s]/g, '_');
-        const folderKey = currentFolderId || 'root';
-        const storagePath = `${folderKey}/${Date.now()}_${sanitizedName}`;
-        const mimeType = item.file.type || 'application/octet-stream';
-
-        // CHUNKING LOGIC:
-        // Supabase Free Tier memiliki batas 50 MB per file.
-        // Jika file berukuran > 35 MB, kita otomatis membagi (chunk) menjadi
-        // bagian 35 MB agar file 100 MB, 200 MB, dsb. dapat terupload dengan sukses!
-        const CHUNK_SIZE = 35 * 1024 * 1024; // 35 MB per part
-
-        if (item.file.size > CHUNK_SIZE) {
-          const totalChunks = Math.ceil(item.file.size / CHUNK_SIZE);
-
-          for (let i = 0; i < totalChunks; i++) {
-            const start = i * CHUNK_SIZE;
-            const end = Math.min(start + CHUNK_SIZE, item.file.size);
-            const chunk = item.file.slice(start, end, mimeType);
-            const chunkPath = `${storagePath}_part${i}`;
-
-            const baseProgress = Math.round((i / totalChunks) * 80);
-            setProgress(Math.max(5, baseProgress));
-
-            const { error: chunkErr } = await supabaseBrowser.storage
-              .from(BROWSER_STORAGE_BUCKET)
-              .upload(chunkPath, chunk, {
-                contentType: mimeType,
-                upsert: true,
-              });
-
-            if (chunkErr) {
-              if (chunkErr.message?.includes('Bucket not found')) {
-                setError(`Bucket '${BROWSER_STORAGE_BUCKET}' tidak ditemukan di Supabase.`);
-              } else if (chunkErr.message?.includes('exceeded the maximum') || chunkErr.statusCode === '413') {
-                setError(`Gagal: Bagian ${i + 1} melebihi batas. Jalankan fix-bucket-sizelimit.sql di Supabase.`);
-              } else {
-                setError(`Gagal mengunggah bagian ${i + 1}/${totalChunks}: ${chunkErr.message}`);
-              }
-              return;
-            }
-          }
+      if (isBrowserGitHubReady) {
+        // -- JALUR 1: Direct GitHub Release Asset Upload --
+        setProgress(10);
+        try {
+          const uploadResult = await uploadFileToGitHubBrowser(
+            item.file,
+            currentFolderId,
+            (pct) => setProgress(pct)
+          );
 
           setProgress(85);
-
-          const downloadUrl = `chunked:${totalChunks}:${storagePath}`;
 
           // Simpan metadata ke API (hanya JSON kecil)
           const metaRes = await fetch('/api/files/metadata', {
@@ -429,9 +393,10 @@ export default function FileHansWYApp() {
               name: item.file.name,
               folderId: currentFolderId,
               size: item.file.size,
-              mimeType,
-              storagePath,
-              downloadUrl,
+              mimeType: item.file.type || 'application/octet-stream',
+              storagePath: uploadResult.storagePath,
+              downloadUrl: uploadResult.downloadUrl,
+              githubAssetId: uploadResult.assetId,
             }),
           });
 
@@ -441,64 +406,12 @@ export default function FileHansWYApp() {
           } else {
             setError((metaData.error as string) || 'Gagal menyimpan metadata file');
           }
-
-        } else {
-          // File normal (<= 35 MB): Single direct upload
-          setProgress(20);
-
-          const { error: storageError } = await supabaseBrowser.storage
-            .from(BROWSER_STORAGE_BUCKET)
-            .upload(storagePath, item.file, {
-              contentType: mimeType,
-              upsert: true,
-            });
-
-          if (storageError) {
-            if (storageError.message?.includes('Bucket not found') || storageError.message?.includes('not found')) {
-              setError(`Bucket '${BROWSER_STORAGE_BUCKET}' tidak ditemukan di Supabase.`);
-            } else if (storageError.message?.includes('security') || storageError.message?.includes('policy') || storageError.statusCode === '403') {
-              setError(`Akses ditolak ke Supabase Storage. Jalankan script fix-rls-storage.sql di SQL Editor.`);
-            } else if (storageError.message?.includes('exceeded the maximum') || storageError.statusCode === '413') {
-              setError(`Ukuran file melebihi batas bucket. Jalankan fix-bucket-sizelimit.sql di Supabase.`);
-            } else {
-              setError(`Upload ke Supabase Storage gagal: ${storageError.message}`);
-            }
-            return;
-          }
-
-          setProgress(75);
-
-          const { data: urlData } = supabaseBrowser.storage
-            .from(BROWSER_STORAGE_BUCKET)
-            .getPublicUrl(storagePath);
-
-          const downloadUrl = urlData.publicUrl;
-
-          setProgress(85);
-
-          const metaRes = await fetch('/api/files/metadata', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name: item.file.name,
-              folderId: currentFolderId,
-              size: item.file.size,
-              mimeType,
-              storagePath,
-              downloadUrl,
-            }),
-          });
-
-          const metaData = await safeParseJson(metaRes);
-          if (metaData.success) {
-            setSuccess();
-          } else {
-            setError((metaData.error as string) || 'Gagal menyimpan metadata file');
-          }
+        } catch (uploadErr) {
+          setError((uploadErr as Error).message || 'Gagal mengunggah file ke GitHub');
         }
 
       } else {
-        // -- JALUR 2: Fallback ke API Route (lokal / tanpa Supabase) --
+        // -- JALUR 2: Fallback ke API Route (server-side / lokal) --
         const formData = new FormData();
         formData.append('file', item.file);
         if (currentFolderId) formData.append('folderId', currentFolderId);
@@ -902,22 +815,21 @@ export default function FileHansWYApp() {
           ))}
         </div>
 
-        {/* Database Missing Warning Banner */}
+        {/* Configuration Warning Banner */}
         {schemaMissing && (
           <div style={{ backgroundColor: 'rgba(230, 40, 49, 0.12)', border: '1.5px solid var(--accent-red)', borderRadius: 'var(--radius-md)', padding: '16px 20px', marginBottom: '20px', display: 'flex', alignItems: 'flex-start', gap: '14px' }}>
             <AlertCircle size={24} color="var(--accent-red)" style={{ flexShrink: 0, marginTop: '2px' }} />
             <div style={{ flex: 1 }}>
               <h4 style={{ color: '#ffffff', fontSize: '0.98rem', fontWeight: 700, marginBottom: '6px' }}>
-                ⚠️ Database Supabase Belum Diinisialisasi
+                ⚠️ GitHub Storage Belum Dikonfigurasi
               </h4>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', lineHeight: '1.6' }}>
-                Tabel database belum dibuat di proyek Supabase Anda (<b>hputlrqzncmtqfhkoqqb.supabase.co</b>).
-                Agar pembuatan folder, upload file, dan penghapusan dapat tersimpan secara permanen:
+                Token GitHub belum dikonfigurasi di file <b>.env.local</b> atau Environment Variables Vercel.
               </p>
               <ol style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', marginTop: '6px', paddingLeft: '18px', lineHeight: '1.6' }}>
-                <li>Buka menu <b>SQL Editor</b> di dashboard Supabase Anda.</li>
-                <li>Salin seluruh kode dari berkas <b>supabase-schema.sql</b> lalu klik <b>Run</b>.</li>
-                <li>Klik tombol <b>Refresh</b> pada website ini setelah skrip selesai dijalankan.</li>
+                <li>Buat Personal Access Token (PAT) di GitHub dengan izin <b>Contents: Read & Write</b>.</li>
+                <li>Tambahkan <b>GITHUB_TOKEN</b> dan <b>NEXT_PUBLIC_GITHUB_TOKEN</b>.</li>
+                <li>Klik tombol <b>Refresh</b> pada website ini setelah konfigurasi selesai.</li>
               </ol>
             </div>
           </div>
@@ -928,7 +840,7 @@ export default function FileHansWYApp() {
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px' }}>
             <span style={{ fontSize: '0.72rem', color: isCloudStorage ? '#52e38c' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
               <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: isCloudStorage ? '#52e38c' : 'var(--text-muted)', display: 'inline-block' }} />
-              {isCloudStorage ? 'Cloud Storage (Supabase)' : 'Local Storage'}
+              {isCloudStorage ? 'Cloud Storage (GitHub)' : 'Local Storage'}
             </span>
           </div>
         )}
