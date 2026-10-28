@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef, DragEvent } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, DragEvent } from 'react';
 import {
   Folder,
   FileText,
@@ -18,19 +18,21 @@ import {
   Unlock,
   Check,
   AlertCircle,
+  AlertTriangle,
   Menu,
   X,
-  Zap,
   Smartphone,
   Archive,
   Music,
   Video,
   Image as ImageIcon,
   Files,
-  CheckCircle2,
-  XCircle,
   Clock,
-  Loader2,
+  Search,
+  ExternalLink,
+  Sun,
+  Heart,
+  MessageSquare,
 } from 'lucide-react';
 import { FolderItem, FileItem, BreadcrumbItem } from '@/lib/types';
 import { isBrowserGitHubReady, uploadFileToGitHubBrowser } from '@/lib/github-browser';
@@ -53,17 +55,16 @@ interface UploadQueueItem {
   id: string;
   file: File;
   status: UploadStatus;
-  progress: number; // 0-100
+  progress: number;
   errorMessage?: string;
 }
 
 // Helper to safely parse JSON from fetch response
-async function safeParseJson(res: Response): Promise<{ success: boolean; [key: string]: unknown }> {
+async function safeParseJson(res: Response): Promise<{ success: boolean;[key: string]: unknown }> {
   const text = await res.text();
   try {
     return JSON.parse(text);
   } catch {
-    // Response was not JSON (e.g. Vercel size limit HTML error page)
     const statusText = res.statusText || `HTTP ${res.status}`;
     if (res.status === 413) {
       return { success: false, error: 'Ukuran file terlalu besar. Coba gunakan file yang lebih kecil.' };
@@ -72,11 +73,11 @@ async function safeParseJson(res: Response): Promise<{ success: boolean; [key: s
   }
 }
 
-export default function FileHansWYApp() {
+export default function ZetsuFileArchiveApp() {
   // Navigation & State
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [currentFolder, setCurrentFolder] = useState<FolderItem | null>(null);
-  const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbItem[]>([{ id: null, name: 'Root' }]);
+  const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbItem[]>([{ id: null, name: 'Files' }]);
   const [folders, setFolders] = useState<FolderItem[]>([]);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -85,12 +86,17 @@ export default function FileHansWYApp() {
   const [schemaMissing, setSchemaMissing] = useState<boolean>(false);
   const [schemaErrorMessage, setSchemaErrorMessage] = useState<string>('');
 
+  // Search filtering
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
   // User & Auth State
   const [user, setUser] = useState<UserInfo>({ name: 'GuestUser', role: 'guest' });
   const [showAuthDropdown, setShowAuthDropdown] = useState<boolean>(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState<boolean>(false);
 
   // Modals State
+  const [showDisclaimerModal, setShowDisclaimerModal] = useState<boolean>(false);
+  const [showChangelogModal, setShowChangelogModal] = useState<boolean>(false);
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
   const [adminPasswordInput, setAdminPasswordInput] = useState<string>('');
   const [authError, setAuthError] = useState<string>('');
@@ -111,6 +117,8 @@ export default function FileHansWYApp() {
 
   const [deleteTarget, setDeleteTarget] = useState<{ type: 'folder' | 'file'; id: string; name: string } | null>(null);
   const [deleting, setDeleting] = useState<boolean>(false);
+
+  const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
 
   // Toasts
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -170,9 +178,16 @@ export default function FileHansWYApp() {
             errorMessage?: string;
           };
           setCurrentFolder(d.currentFolder);
-          setBreadcrumbs(d.breadcrumbs);
-          setFolders(d.folders);
-          setFiles(d.files);
+
+          // Format breadcrumbs: Root displays as "Files"
+          const formattedBreadcrumbs = (d.breadcrumbs || []).map((b, idx) => ({
+            ...b,
+            name: idx === 0 ? 'Files' : b.name,
+          }));
+          setBreadcrumbs(formattedBreadcrumbs.length > 0 ? formattedBreadcrumbs : [{ id: null, name: 'Files' }]);
+
+          setFolders(d.folders || []);
+          setFiles(d.files || []);
           setIsCloudStorage(d.isCloudStorage);
           setSchemaMissing(Boolean(d.schemaMissing));
           if (d.schemaMissing && d.errorMessage) {
@@ -210,6 +225,7 @@ export default function FileHansWYApp() {
 
   const navigateToFolder = (id: string | null) => {
     setCurrentFolderId(id);
+    setSearchQuery('');
   };
 
   const navigateToParent = () => {
@@ -219,6 +235,7 @@ export default function FileHansWYApp() {
     } else {
       setCurrentFolderId(null);
     }
+    setSearchQuery('');
   };
 
   // Handle Login
@@ -236,7 +253,7 @@ export default function FileHansWYApp() {
         setUser(data.user as UserInfo);
         setShowLoginModal(false);
         setAdminPasswordInput('');
-        showToast('Login berhasil sebagai HansWY (Admin) ✓', 'success');
+        showToast('Login berhasil sebagai Admin Zetsu ✓', 'success');
       } else {
         setAuthError((data.error as string) || 'Password salah');
       }
@@ -259,23 +276,15 @@ export default function FileHansWYApp() {
 
   // Guard for admin actions
   const requireAdmin = (): boolean => {
-    if (user.role !== 'admin') {
-      setShowLoginModal(true);
-      showToast('Tindakan ini memerlukan izin Admin. Silakan login.', 'info');
-      return false;
-    }
-    return true;
+    if (user.role === 'admin') return true;
+    setShowLoginModal(true);
+    return false;
   };
 
-  // Handle Create Folder
+  // Create Folder
   const handleCreateFolder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!requireAdmin()) return;
-    if (!newFolderName.trim()) {
-      showToast('Nama folder wajib diisi', 'error');
-      return;
-    }
-
+    if (!newFolderName.trim()) return;
     setCreatingFolder(true);
     try {
       const res = await fetch('/api/folders', {
@@ -285,22 +294,103 @@ export default function FileHansWYApp() {
       });
       const data = await safeParseJson(res);
       if (data.success) {
-        showToast(`Folder "${newFolderName}" berhasil dibuat ✓`, 'success');
-        setNewFolderName('');
         setShowCreateFolderModal(false);
+        setNewFolderName('');
         fetchContents(currentFolderId, true);
+        showToast('Folder berhasil dibuat ✓', 'success');
       } else {
         showToast((data.error as string) || 'Gagal membuat folder', 'error');
       }
     } catch (err) {
-      showToast((err as Error).message, 'error');
+      showToast((err as Error).message || 'Terjadi kesalahan jaringan', 'error');
     } finally {
       setCreatingFolder(false);
     }
   };
 
-  // ---- BULK UPLOAD LOGIC ----
+  // Rename Action
+  const handleRename = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!renameTarget || !renameInput.trim()) return;
+    try {
+      const endpoint = renameTarget.type === 'folder' ? '/api/folders' : '/api/files';
+      const res = await fetch(endpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: renameTarget.id, name: renameInput.trim() }),
+      });
+      const data = await safeParseJson(res);
+      if (data.success) {
+        setRenameTarget(null);
+        setRenameInput('');
+        fetchContents(currentFolderId, true);
+        showToast('Nama berhasil diubah ✓', 'success');
+      } else {
+        showToast((data.error as string) || 'Gagal mengubah nama', 'error');
+      }
+    } catch (err) {
+      showToast((err as Error).message || 'Terjadi kesalahan jaringan', 'error');
+    }
+  };
 
+  // Delete Action
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const endpoint = deleteTarget.type === 'folder' ? '/api/folders' : '/api/files';
+      const res = await fetch(`${endpoint}?id=${encodeURIComponent(deleteTarget.id)}`, {
+        method: 'DELETE',
+      });
+      const data = await safeParseJson(res);
+      if (data.success) {
+        setDeleteTarget(null);
+        fetchContents(currentFolderId, true);
+        showToast(`${deleteTarget.type === 'folder' ? 'Folder' : 'File'} berhasil dihapus ✓`, 'success');
+      } else {
+        showToast((data.error as string) || 'Gagal menghapus item', 'error');
+      }
+    } catch (err) {
+      showToast((err as Error).message || 'Terjadi kesalahan jaringan', 'error');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // Download File Action
+  const handleDownloadFile = async (file: FileItem) => {
+    setDownloadingFileId(file.id);
+    try {
+      const dlUrl = file.is_chunked
+        ? `/api/download/${file.id}`
+        : file.download_url.startsWith('http')
+          ? file.download_url
+          : `${window.location.origin}${file.download_url}`;
+
+      const a = document.createElement('a');
+      a.href = dlUrl;
+      a.download = file.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      showToast(`Mengunduh "${file.name}" (${formatFileSize(file.size)})... 🚀`, 'info');
+    } catch (err) {
+      showToast((err as Error).message || 'Gagal mengunduh file', 'error');
+    } finally {
+      setTimeout(() => setDownloadingFileId(null), 1200);
+    }
+  };
+
+  // Copy Direct Link
+  const copyDirectLink = (file: FileItem) => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const shareableUrl = `${origin}?download=${encodeURIComponent(file.id)}`;
+    navigator.clipboard.writeText(shareableUrl);
+    showToast('Tautan langsung disalin ke papan klip! 📋', 'success');
+  };
+
+  // ---- BULK UPLOAD LOGIC ----
   const addFilesToQueue = (newFiles: File[]) => {
     const items: UploadQueueItem[] = newFiles.map((f) => ({
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -314,7 +404,7 @@ export default function FileHansWYApp() {
   const handleBulkFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       addFilesToQueue(Array.from(e.target.files));
-      e.target.value = ''; // reset so same files can be re-added
+      e.target.value = '';
     }
   };
 
@@ -341,7 +431,6 @@ export default function FileHansWYApp() {
   };
 
   const uploadSingleFile = async (item: UploadQueueItem): Promise<void> => {
-    // Mark as uploading
     setUploadQueue((prev) =>
       prev.map((i) => (i.id === item.id ? { ...i, status: 'uploading', progress: 5 } : i))
     );
@@ -367,30 +456,16 @@ export default function FileHansWYApp() {
     };
 
     try {
-      // ================================================================
-      // STRATEGI: Upload langsung dari browser ke GitHub Releases API
-      // Melewati Vercel API sepenuhnya → tidak ada batas 4.5MB Vercel
-      // GitHub Releases: Mendukung hingga 2GB per file tanpa batas bandwidth
-      // ================================================================
-
       if (isBrowserGitHubReady) {
-        // -- JALUR 1: Chunked Upload ke GitHub (Mendukung File Besar & Tanpa Masalah CORS) --
         setProgress(5);
         try {
-          await uploadFileToGitHubBrowser(
-            item.file,
-            currentFolderId,
-            (pct) => setProgress(pct)
-          );
-
+          await uploadFileToGitHubBrowser(item.file, currentFolderId, (pct) => setProgress(pct));
           setProgress(100);
           setSuccess();
         } catch (uploadErr) {
           setError((uploadErr as Error).message || 'Gagal mengunggah file ke GitHub');
         }
-
       } else {
-        // -- JALUR 2: Fallback ke API Route (server-side / lokal) --
         const formData = new FormData();
         formData.append('file', item.file);
         if (currentFolderId) formData.append('folderId', currentFolderId);
@@ -398,180 +473,55 @@ export default function FileHansWYApp() {
         setProgress(20);
         const progressInterval = setInterval(() => {
           setUploadQueue((prev) =>
-            prev.map((i) =>
-              i.id === item.id && i.status === 'uploading' && i.progress < 80
-                ? { ...i, progress: i.progress + 10 }
-                : i
-            )
+            prev.map((i) => {
+              if (i.id === item.id && i.status === 'uploading' && i.progress < 85) {
+                return { ...i, progress: Math.min(i.progress + 15, 85) };
+              }
+              return i;
+            })
           );
-        }, 500);
+        }, 300);
 
         const res = await fetch('/api/files', { method: 'POST', body: formData });
         clearInterval(progressInterval);
         const data = await safeParseJson(res);
 
         if (data.success) {
+          setProgress(100);
           setSuccess();
         } else {
-          setError((data.error as string) || 'Upload gagal');
+          setError((data.error as string) || 'Gagal mengunggah file');
         }
       }
     } catch (err) {
-      setError((err as Error).message || 'Terjadi kesalahan saat upload');
+      setError((err as Error).message || 'Terjadi kesalahan jaringan');
     }
   };
 
-  const startBulkUpload = async () => {
-    if (!requireAdmin()) return;
-
-    const queued = uploadQueue.filter((i) => i.status === 'queued');
-    if (queued.length === 0) {
-      showToast('Tidak ada file dalam antrean untuk diunggah', 'info');
-      return;
-    }
+  const startBatchUpload = async () => {
+    const queuedItems = uploadQueue.filter((i) => i.status === 'queued' || i.status === 'error');
+    if (queuedItems.length === 0) return;
 
     setIsProcessingQueue(true);
-
-    // Upload files sequentially (prevents overwhelming the server)
-    for (const item of queued) {
+    for (const item of queuedItems) {
       await uploadSingleFile(item);
     }
-
     setIsProcessingQueue(false);
-
-    // Refresh contents
     fetchContents(currentFolderId, true);
-
-    // Summary toast
-    const finalQueue = uploadQueue;
-    const successCount = finalQueue.filter((i) => i.status === 'success').length + queued.length;
-    const failCount = 0; // Will be updated after state settles
-
-    setTimeout(() => {
-      setUploadQueue((prev) => {
-        const s = prev.filter((i) => i.status === 'success').length;
-        const f = prev.filter((i) => i.status === 'error').length;
-        if (s > 0) showToast(`${s} file berhasil diunggah${f > 0 ? `, ${f} file gagal` : ''} ✓`, f > 0 ? 'info' : 'success');
-        return prev;
-      });
-    }, 300);
-  };
-
-  const clearCompletedFromQueue = () => {
-    setUploadQueue((prev) => prev.filter((i) => i.status === 'queued' || i.status === 'uploading'));
+    showToast('Proses upload selesai! ✓', 'success');
   };
 
   const closeUploadModal = () => {
     if (isProcessingQueue) return;
-    setShowUploadModal(false);
+    const hasSuccess = uploadQueue.some((i) => i.status === 'success');
+    if (hasSuccess) {
+      fetchContents(currentFolderId, true);
+    }
     setUploadQueue([]);
-    setIsDragOver(false);
+    setShowUploadModal(false);
   };
 
-  // Handle Rename
-  const handleRename = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!requireAdmin() || !renameTarget) return;
-    if (!renameInput.trim()) {
-      showToast('Nama baru tidak boleh kosong', 'error');
-      return;
-    }
-
-    try {
-      const endpoint = renameTarget.type === 'folder' ? '/api/folders' : '/api/files';
-      const body =
-        renameTarget.type === 'folder'
-          ? { folderId: renameTarget.id, name: renameInput.trim() }
-          : { fileId: renameTarget.id, name: renameInput.trim() };
-
-      const res = await fetch(endpoint, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await safeParseJson(res);
-      if (data.success) {
-        showToast(`Berhasil diubah menjadi "${renameInput}" ✓`, 'success');
-        setRenameTarget(null);
-        fetchContents(currentFolderId, true);
-      } else {
-        showToast((data.error as string) || 'Gagal mengubah nama', 'error');
-      }
-    } catch (err) {
-      showToast((err as Error).message, 'error');
-    }
-  };
-
-  // Handle Delete
-  const handleDelete = async () => {
-    if (!requireAdmin() || !deleteTarget) return;
-    setDeleting(true);
-    try {
-      const endpoint =
-        deleteTarget.type === 'folder'
-          ? `/api/folders?folderId=${deleteTarget.id}`
-          : `/api/files?fileId=${deleteTarget.id}`;
-
-      const res = await fetch(endpoint, { method: 'DELETE' });
-      const data = await safeParseJson(res);
-      if (data.success) {
-        showToast(
-          `${deleteTarget.type === 'folder' ? 'Folder' : 'File'} "${deleteTarget.name}" berhasil dihapus ✓`,
-          'success'
-        );
-        setDeleteTarget(null);
-        fetchContents(currentFolderId, true);
-      } else {
-        showToast((data.error as string) || 'Gagal menghapus item', 'error');
-      }
-    } catch (err) {
-      showToast((err as Error).message, 'error');
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  // Copy Direct Link
-  const copyDirectLink = (file: FileItem) => {
-    let fullUrl = '';
-    if (file.download_url.startsWith('chunked:')) {
-      fullUrl = `${window.location.origin}/api/download/${file.id}`;
-    } else {
-      fullUrl = file.download_url.startsWith('http')
-        ? file.download_url
-        : `${window.location.origin}${file.download_url}`;
-    }
-    navigator.clipboard.writeText(fullUrl);
-    showToast('Tautan langsung berhasil disalin! 📋', 'success');
-  };
-
-  // State & Handler for File Downloads (both direct and chunked)
-  const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
-
-  const handleDownloadFile = (file: FileItem) => {
-    let dlUrl = '';
-    if (file.download_url.startsWith('chunked:')) {
-      dlUrl = `/api/download/${file.id}`;
-    } else {
-      dlUrl = file.download_url.startsWith('http')
-        ? file.download_url
-        : `${window.location.origin}${file.download_url}`;
-    }
-
-    setDownloadingFileId(file.id);
-    const a = document.createElement('a');
-    a.href = dlUrl;
-    a.download = file.name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    showToast(`Memulai unduhan "${file.name}"... 🚀`, 'info');
-    setTimeout(() => {
-      setDownloadingFileId(null);
-    }, 2000);
-  };
-
-  // Auto-download when URL has ?download=fileId
+  // Check URL parameters for direct file download
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
@@ -582,22 +532,27 @@ export default function FileHansWYApp() {
     setAutoDownloadLoading(true);
     setAutoDownloadError('');
 
-    fetch(`/api/download/${downloadId}?info=true`)
-      .then((res) => {
-        if (!res.ok) throw new Error('File tidak ditemukan atau telah dihapus.');
-        return res.json();
-      })
+    fetch(`/api/files?id=${encodeURIComponent(downloadId)}`)
+      .then((res) => safeParseJson(res))
       .then((data) => {
         if (!isMounted) return;
+        setAutoDownloadLoading(false);
         if (data.success && data.file) {
-          const target = data.file;
-          setAutoDownloadFile(target);
-          setAutoDownloadLoading(false);
+          const target = data.file as FileItem;
+          setAutoDownloadFile({
+            id: target.id,
+            name: target.name,
+            size: target.size,
+            mime_type: target.mime_type,
+            is_chunked: Boolean(target.is_chunked),
+            download_url: target.download_url,
+          });
 
-          // Direct trigger download
           const dlUrl = target.is_chunked
             ? `/api/download/${target.id}`
-            : (target.download_url.startsWith('http') ? target.download_url : `${window.location.origin}${target.download_url}`);
+            : target.download_url.startsWith('http')
+              ? target.download_url
+              : `${window.location.origin}${target.download_url}`;
 
           const a = document.createElement('a');
           a.href = dlUrl;
@@ -608,7 +563,7 @@ export default function FileHansWYApp() {
 
           showToast(`Mengunduh "${target.name}" (${formatFileSize(target.size)})... 🚀`, 'info');
         } else {
-          throw new Error(data.error || 'File tidak ditemukan');
+          throw new Error((data.error as string) || 'File tidak ditemukan');
         }
       })
       .catch((err) => {
@@ -632,41 +587,48 @@ export default function FileHansWYApp() {
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
   };
 
-  // Format Date
-  const formatDate = (dateString: string) => {
+  // Format Date & Time like screenshot (e.g., "14 Oct 2026", "21:34 WIB")
+  const formatDateParts = (dateString: string) => {
     try {
       const d = new Date(dateString);
-      return d.toLocaleString('en-US', {
-        month: 'numeric', day: 'numeric', year: 'numeric',
-        hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true,
-      });
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const day = d.getDate();
+      const month = months[d.getMonth()];
+      const year = d.getFullYear();
+      const hours = String(d.getHours()).padStart(2, '0');
+      const minutes = String(d.getMinutes()).padStart(2, '0');
+      return {
+        dateStr: `${day} ${month} ${year}`,
+        timeStr: `${hours}:${minutes} WIB`,
+      };
     } catch {
-      return dateString;
+      return { dateStr: dateString, timeStr: '' };
     }
   };
 
   // File icon selector
   const renderFileIcon = (file: FileItem) => {
     const ext = file.name.split('.').pop()?.toLowerCase();
-    if (ext === 'apk') return <Smartphone size={22} />;
-    if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext || '')) return <Archive size={22} />;
-    if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(ext || '')) return <ImageIcon size={22} />;
-    if (['mp4', 'mkv', 'mov', 'avi'].includes(ext || '')) return <Video size={22} />;
-    if (['mp3', 'wav', 'ogg', 'm4a'].includes(ext || '')) return <Music size={22} />;
-    return <FileText size={22} />;
+    if (ext === 'apk') return <Smartphone size={18} />;
+    if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext || '')) return <Archive size={18} />;
+    if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(ext || '')) return <ImageIcon size={18} />;
+    if (['mp4', 'mkv', 'mov', 'avi'].includes(ext || '')) return <Video size={18} />;
+    if (['mp3', 'wav', 'ogg', 'm4a'].includes(ext || '')) return <Music size={18} />;
+    return <FileText size={18} />;
   };
 
-  const getFileIconForQueue = (file: File) => {
-    const ext = file.name.split('.').pop()?.toLowerCase();
-    if (ext === 'apk') return <Smartphone size={16} />;
-    if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext || '')) return <Archive size={16} />;
-    if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(ext || '')) return <ImageIcon size={16} />;
-    if (['mp4', 'mkv', 'mov', 'avi'].includes(ext || '')) return <Video size={16} />;
-    if (['mp3', 'wav', 'ogg', 'm4a'].includes(ext || '')) return <Music size={16} />;
-    return <FileText size={16} />;
-  };
+  // Filtered folders and files
+  const filteredFolders = useMemo(() => {
+    if (!searchQuery.trim()) return folders;
+    return folders.filter((f) => f.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  }, [folders, searchQuery]);
 
-  const totalItemCount = folders.length + files.length;
+  const filteredFiles = useMemo(() => {
+    if (!searchQuery.trim()) return files;
+    return files.filter((f) => f.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  }, [files, searchQuery]);
+
+  const totalVisibleItems = filteredFolders.length + filteredFiles.length;
   const queuedCount = uploadQueue.filter((i) => i.status === 'queued').length;
   const successCount = uploadQueue.filter((i) => i.status === 'success').length;
   const errorCount = uploadQueue.filter((i) => i.status === 'error').length;
@@ -674,7 +636,7 @@ export default function FileHansWYApp() {
 
   return (
     <div className="app-container">
-      {/* Mobile Toggle Button */}
+      {/* Mobile Nav Toggle Button */}
       <button
         className="mobile-nav-toggle"
         onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}
@@ -683,326 +645,532 @@ export default function FileHansWYApp() {
         {mobileSidebarOpen ? <X size={20} /> : <Menu size={20} />}
       </button>
 
-      {/* ------------------------------------------------------------------ */}
-      {/* 1. LEFT SIDEBAR */}
-      {/* ------------------------------------------------------------------ */}
+      {/* ============================================================
+          1. LEFT SIDEBAR (ZETSU STYLE)
+          ============================================================ */}
       <aside className={`sidebar ${mobileSidebarOpen ? 'open' : ''}`}>
         {/* Brand Header */}
-        <div className="brand-section">
-          <div className="brand-logo-badge">
-            <Zap size={24} fill="currentColor" strokeWidth={0} />
+        <div
+          className="brand-section-zetsu"
+          onClick={() => {
+            navigateToFolder(null);
+            setMobileSidebarOpen(false);
+          }}
+        >
+          <div className="brand-logo-z">Z</div>
+          <div className="brand-text-block">
+            <h1 className="brand-title-zetsu">Zetsu</h1>
+            <span className="brand-subtitle-zetsu">FILE ARCHIVE</span>
           </div>
-          <h1 className="brand-title">File HansWY</h1>
         </div>
 
-        {/* User Status Profile Card */}
-        <div style={{ position: 'relative' }}>
-          <div
-            className="user-status-card"
-            onClick={() => setShowAuthDropdown(!showAuthDropdown)}
-            title="Klik untuk membuka menu otentikasi"
-          >
-            <div className="user-status-left">
-              <div className="user-avatar-badge">
-                {user.role === 'admin' ? 'H' : 'G'}
-              </div>
-              <span className="user-name">{user.name}</span>
-            </div>
-            <ChevronDown size={16} color="var(--text-muted)" />
-          </div>
-
-          {/* Auth Dropdown */}
-          {showAuthDropdown && (
-            <div className="auth-dropdown">
-              {user.role === 'admin' ? (
-                <button
-                  onClick={handleLogout}
-                  style={{ width: '100%', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px', borderRadius: 'var(--radius-sm)', color: '#ff4757', fontWeight: 600, fontSize: '0.9rem' }}
-                  className="nav-item"
-                >
-                  <Lock size={16} /> Logout Admin
-                </button>
-              ) : (
-                <button
-                  onClick={() => { setShowAuthDropdown(false); setShowLoginModal(true); }}
-                  style={{ width: '100%', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px', borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.9rem' }}
-                  className="nav-item"
-                >
-                  <Unlock size={16} /> Login sebagai Admin
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Navigation items */}
+        {/* Navigation */}
         <nav className="sidebar-nav">
+          <div className="nav-group-title">COLLECTION</div>
+
+          {/* All files */}
           <button
-            className={`nav-item ${currentFolderId === null ? 'active' : ''}`}
-            onClick={() => { navigateToFolder(null); setMobileSidebarOpen(false); }}
+            className={`nav-item-zetsu ${currentFolderId === null ? 'active' : ''}`}
+            onClick={() => {
+              navigateToFolder(null);
+              setMobileSidebarOpen(false);
+            }}
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-              <polyline points="9 22 9 12 15 12 15 22" />
-            </svg>
-            Home
+            <div className="nav-item-content">
+              <Folder size={17} color={currentFolderId === null ? 'var(--accent-red)' : '#858b98'} />
+              <span>All files</span>
+            </div>
+            {currentFolderId === null && <span className="nav-arrow-active">↗</span>}
           </button>
 
+          {/* Changelog */}
           <button
-            className="nav-item"
-            onClick={() => { if (requireAdmin()) { setShowCreateFolderModal(true); setMobileSidebarOpen(false); } }}
+            className="nav-item-zetsu"
+            onClick={() => {
+              setShowChangelogModal(true);
+              setMobileSidebarOpen(false);
+            }}
           >
-            <Plus size={18} />
-            Buat Folder
+            <div className="nav-item-content">
+              <Clock size={17} color="#858b98" />
+              <span>Changelog</span>
+            </div>
           </button>
 
-          <button
-            className="nav-item"
-            onClick={() => { if (requireAdmin()) { setShowUploadModal(true); setMobileSidebarOpen(false); } }}
+          <div className="nav-group-title">COMMUNITY</div>
+
+          {/* Discord */}
+          <a
+            href="https://discord.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="nav-item-zetsu"
           >
-            <Files size={18} />
-            Bulk Upload
-          </button>
+            <div className="nav-item-content">
+              <MessageSquare size={17} color="#858b98" />
+              <span>Discord</span>
+            </div>
+            <span className="nav-arrow-external">↗</span>
+          </a>
+
+          {/* Support Zetsu */}
+          <a
+            href="https://saweria.co"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="nav-item-zetsu"
+          >
+            <div className="nav-item-content">
+              <Heart size={17} color="#858b98" />
+              <span>Support Zetsu</span>
+            </div>
+            <span className="nav-arrow-external">↗</span>
+          </a>
         </nav>
 
-        {/* Sidebar Footer */}
+        {/* Sidebar Footer & Admin Controls */}
         <div className="sidebar-footer">
-          <div className="powered-badge">POWERED BY HANSWY</div>
+          {/* User status card for admin */}
+          <div style={{ position: 'relative' }}>
+            <div
+              className="user-status-card"
+              onClick={() => setShowAuthDropdown(!showAuthDropdown)}
+              title="Akses Admin"
+            >
+              <div className="user-status-left">
+                <div className="user-avatar-badge">{user.role === 'admin' ? 'Z' : 'G'}</div>
+                <span className="user-name">{user.name}</span>
+              </div>
+              <ChevronDown size={14} color="#727888" />
+            </div>
+
+            {showAuthDropdown && (
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: 'calc(100% + 4px)',
+                  left: 0,
+                  right: 0,
+                  backgroundColor: 'var(--bg-card)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '6px',
+                  zIndex: 60,
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+                }}
+              >
+                {user.role === 'admin' ? (
+                  <button
+                    onClick={handleLogout}
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      color: '#ff4757',
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <Lock size={14} /> Logout Admin
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setShowAuthDropdown(false);
+                      setShowLoginModal(true);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      color: 'var(--text-primary)',
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <Unlock size={14} /> Login Admin
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="sidebar-footer-text">Made for the grind.</div>
+          <div className="sidebar-footer-subtext">Zetsu Files</div>
         </div>
       </aside>
 
-      {/* ------------------------------------------------------------------ */}
-      {/* 2. MAIN CONTENT AREA */}
-      {/* ------------------------------------------------------------------ */}
+      {/* ============================================================
+          2. MAIN CONTENT AREA
+          ============================================================ */}
       <main className="main-content">
-        {/* Breadcrumb Bar */}
-        <div className="breadcrumb-bar">
-          {breadcrumbs.map((crumb, idx) => (
-            <React.Fragment key={crumb.id || 'root'}>
-              <span
-                className="breadcrumb-segment"
-                onClick={() => navigateToFolder(crumb.id)}
-              >
-                {crumb.name}
-              </span>
-              {idx < breadcrumbs.length - 1 && (
-                <span className="breadcrumb-separator">
-                  <ChevronRight size={14} />
+        {/* Top Navigation Bar */}
+        <div className="top-nav-bar">
+          <div className="breadcrumb-left">
+            <span
+              className="breadcrumb-root-icon"
+              onClick={() => navigateToFolder(null)}
+              style={{ cursor: 'pointer' }}
+            >
+              <Folder size={16} />
+            </span>
+            {breadcrumbs.map((crumb, idx) => (
+              <React.Fragment key={crumb.id || 'root'}>
+                {idx > 0 && <span style={{ color: '#555b6a' }}>/</span>}
+                <span
+                  className={
+                    idx === breadcrumbs.length - 1 ? 'breadcrumb-item-current' : 'breadcrumb-item-text'
+                  }
+                  onClick={() => navigateToFolder(crumb.id)}
+                >
+                  {crumb.name}
                 </span>
-              )}
-            </React.Fragment>
-          ))}
+              </React.Fragment>
+            ))}
+          </div>
+
+          <div className="top-nav-right">
+            <span className="top-badge-title">ZETSU / DOWNLOAD CENTER</span>
+            <button
+              className="theme-toggle-btn"
+              title="Theme Toggle"
+              onClick={() => showToast('Tema Zetsu Dark Aktif', 'info')}
+            >
+              <Sun size={17} />
+            </button>
+          </div>
         </div>
 
-        {/* Configuration Warning Banner */}
+        {/* Configuration Warning Banner if GitHub missing */}
         {schemaMissing && (
-          <div style={{ backgroundColor: 'rgba(230, 40, 49, 0.12)', border: '1.5px solid var(--accent-red)', borderRadius: 'var(--radius-md)', padding: '16px 20px', marginBottom: '20px', display: 'flex', alignItems: 'flex-start', gap: '14px' }}>
-            <AlertCircle size={24} color="var(--accent-red)" style={{ flexShrink: 0, marginTop: '2px' }} />
+          <div
+            style={{
+              backgroundColor: 'rgba(207, 60, 44, 0.1)',
+              border: '1px solid var(--accent-red)',
+              borderRadius: 'var(--radius-md)',
+              padding: '14px 18px',
+              marginBottom: '18px',
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '12px',
+            }}
+          >
+            <AlertCircle size={20} color="var(--accent-red)" style={{ flexShrink: 0, marginTop: '2px' }} />
             <div style={{ flex: 1 }}>
-              <h4 style={{ color: '#ffffff', fontSize: '0.98rem', fontWeight: 700, marginBottom: '6px' }}>
-                ⚠️ GitHub Storage Belum Dikonfigurasi
+              <h4 style={{ color: '#ffffff', fontSize: '0.92rem', fontWeight: 700, marginBottom: '4px' }}>
+                GitHub Storage Belum Dikonfigurasi
               </h4>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', lineHeight: '1.6' }}>
-                Token GitHub belum dikonfigurasi di file <b>.env.local</b> atau Environment Variables Vercel.
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', lineHeight: '1.5' }}>
+                {schemaErrorMessage || 'Silakan tambahkan GITHUB_TOKEN di file .env.local untuk penyimpanan cloud.'}
               </p>
-              <ol style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', marginTop: '6px', paddingLeft: '18px', lineHeight: '1.6' }}>
-                <li>Buat Personal Access Token (PAT) di GitHub dengan izin <b>Contents: Read & Write</b>.</li>
-                <li>Tambahkan <b>GITHUB_TOKEN</b> dan <b>NEXT_PUBLIC_GITHUB_TOKEN</b>.</li>
-                <li>Klik tombol <b>Refresh</b> pada website ini setelah konfigurasi selesai.</li>
-              </ol>
             </div>
           </div>
         )}
 
-        {/* Cloud/Local Storage indicator */}
-        {!schemaMissing && (
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px' }}>
-            <span style={{ fontSize: '0.72rem', color: isCloudStorage ? '#52e38c' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: isCloudStorage ? '#52e38c' : 'var(--text-muted)', display: 'inline-block' }} />
-              {isCloudStorage ? 'Cloud Storage (GitHub)' : 'Local Storage'}
-            </span>
-          </div>
-        )}
-
-        {/* Directory Header Banner Card */}
-        <section className="directory-banner">
-          <div className="directory-info">
-            <div className="folder-icon-badge">
-              <Folder size={28} fill="currentColor" />
-            </div>
-            <div className="directory-titles">
-              <h2>{currentFolder ? currentFolder.name : 'Root Directory'}</h2>
-              <p>{totalItemCount} {totalItemCount === 1 ? 'item' : 'items'}</p>
-            </div>
-          </div>
-
-          <div className="directory-actions">
-            <button
-              className="btn-secondary"
-              onClick={() => fetchContents(currentFolderId, true)}
-              disabled={refreshing}
-              title="Perbarui daftar file dan folder"
-            >
-              <RotateCw size={16} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} />
-              Refresh
-            </button>
-
-            <button
-              className="btn-secondary"
-              onClick={() => { if (requireAdmin()) setShowCreateFolderModal(true); }}
-              title="Buat folder baru di direktori ini"
-            >
-              <Plus size={16} />
-              Folder
-            </button>
-
-            <button
-              className="btn-red"
-              onClick={() => { if (requireAdmin()) setShowUploadModal(true); }}
-              title="Unggah file ke direktori ini"
-            >
-              <Upload size={16} />
-              Upload
-            </button>
-          </div>
+        {/* ============================================================
+            HERO BANNER - ANIMATION VIDEO (OTOMATIS TANPA PLAY BUTTON)
+            ============================================================ */}
+        <section className="hero-banner-wrap">
+          <video
+            src="/hanswy-banner.mp4"
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="hero-banner-video"
+          />
         </section>
 
-        {/* Parent Directory Link */}
-        {currentFolderId !== null && (
-          <div className="parent-nav-card" onClick={navigateToParent}>
-            <div className="parent-icon-badge">
-              <ArrowLeft size={18} />
+        {/* ============================================================
+            CHANGELOG CARD
+            ============================================================ */}
+        <section className="changelog-bar">
+          <div className="changelog-left">
+            <div className="changelog-icon-wrap">
+              <Clock size={18} />
             </div>
-            <div>
-              <div className="parent-text">..</div>
-              <div className="parent-subtext">Go back up to parent</div>
+            <div className="changelog-info">
+              <div className="changelog-meta">
+                <span className="changelog-tag">CHANGELOG</span>
+                <span className="changelog-date">23 Oct 2026 • 21:00 WIB</span>
+              </div>
+              <span className="changelog-title">STILL UPDATING</span>
             </div>
           </div>
+
+          <button
+            className="changelog-link-btn"
+            onClick={() => setShowChangelogModal(true)}
+          >
+            <span>View notes</span>
+            <span>↗</span>
+          </button>
+        </section>
+
+        {/* ============================================================
+            RISK DISCLAIMER NOTICE BAR
+            ============================================================ */}
+        <div className="risk-notice-bar">
+          <div className="risk-notice-left">
+            <AlertTriangle size={15} />
+            <span>Use at your own risk. Compatibility across all devices is not guaranteed.</span>
+          </div>
+          <span className="risk-read-link" onClick={() => setShowDisclaimerModal(true)}>
+            Read first
+          </span>
+        </div>
+
+        {/* ============================================================
+            SECTION HEADER: ALL FILES. + SEARCH & CONTROLS
+            ============================================================ */}
+        <div className="section-header-row">
+          <div className="section-titles">
+            <h2 className="section-title-main">
+              All files<span className="accent-dot">.</span>
+            </h2>
+            <span className="section-subtitle">
+              {filteredFolders.length} {filteredFolders.length === 1 ? 'folder' : 'folders'}
+              {filteredFiles.length > 0 && `, ${filteredFiles.length} files`}
+            </span>
+          </div>
+
+          <div className="section-controls-right">
+            {/* Real-time search box */}
+            <div className="search-box-wrap">
+              <Search size={15} className="search-box-icon" />
+              <input
+                type="text"
+                placeholder="Search this folder..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="search-input-field"
+              />
+            </div>
+
+            {/* Refresh button */}
+            <button
+              className="icon-control-btn"
+              onClick={() => fetchContents(currentFolderId, true)}
+              disabled={refreshing}
+              title="Perbarui folder"
+            >
+              <RotateCw size={15} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} />
+            </button>
+
+            {/* Admin action buttons */}
+            {user.role === 'admin' && (
+              <>
+                <button
+                  className="btn-admin-action secondary"
+                  onClick={() => setShowCreateFolderModal(true)}
+                  title="Buat folder baru"
+                >
+                  <Plus size={14} />
+                  <span>Folder</span>
+                </button>
+                <button
+                  className="btn-admin-action primary"
+                  onClick={() => setShowUploadModal(true)}
+                  title="Upload file"
+                >
+                  <Upload size={14} />
+                  <span>Upload</span>
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Parent Directory Navigation */}
+        {currentFolderId !== null && (
+          <div
+            onClick={navigateToParent}
+            style={{
+              backgroundColor: 'var(--bg-card)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              padding: '12px 18px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              marginBottom: '12px',
+              cursor: 'pointer',
+              color: 'var(--text-secondary)',
+              fontSize: '0.88rem',
+            }}
+          >
+            <ArrowLeft size={16} />
+            <span>Kembali ke folder sebelumnya (..)</span>
+          </div>
         )}
+
+        {/* Table Column Headers */}
+        <div className="table-header-row">
+          <span>NAME</span>
+          <span>UPDATED</span>
+        </div>
 
         {/* Loading Spinner */}
         {loading && (
           <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-secondary)' }}>
-            <RotateCw size={32} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 12px' }} />
-            <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem' }}>Memuat direktori File HansWY...</p>
+            <RotateCw size={28} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 12px' }} />
+            <p style={{ fontSize: '0.85rem' }}>Memuat direktori Zetsu Archive...</p>
           </div>
         )}
 
-        {/* Items List */}
+        {/* ============================================================
+            ITEMS LIST (FOLDERS & FILES)
+            ============================================================ */}
         {!loading && (
           <div className="items-list">
             {/* Empty state */}
-            {folders.length === 0 && files.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '50px 20px', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-md)', border: '1px dashed var(--border-subtle)' }}>
-                <Folder size={40} color="var(--text-muted)" style={{ margin: '0 auto 12px' }} />
-                <h3 style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>Direktori ini masih kosong</h3>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                  Klik tombol <b>Upload</b> untuk mengunggah file atau <b>Folder</b> untuk membuat folder baru.
+            {totalVisibleItems === 0 && (
+              <div
+                style={{
+                  textAlign: 'center',
+                  padding: '48px 20px',
+                  backgroundColor: 'var(--bg-card)',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px dashed var(--border-subtle)',
+                }}
+              >
+                <Folder size={36} color="var(--text-muted)" style={{ margin: '0 auto 10px' }} />
+                <h4 style={{ color: 'var(--text-secondary)', marginBottom: '4px', fontSize: '0.95rem' }}>
+                  {searchQuery ? 'Tidak ada file atau folder yang cocok' : 'Direktori ini masih kosong'}
+                </h4>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                  {searchQuery ? 'Coba gunakan kata kunci pencarian yang lain.' : 'Belum ada konten di dalam folder ini.'}
                 </p>
               </div>
             )}
 
-            {/* FOLDERS LIST */}
-            {folders.map((folder) => (
-              <div key={folder.id} className="item-card">
-                <div className="item-left" style={{ cursor: 'pointer' }} onClick={() => navigateToFolder(folder.id)}>
-                  <div className="item-badge folder">
-                    <Folder size={22} fill="currentColor" />
-                  </div>
-                  <div className="item-details">
-                    <div className="item-name">{folder.name}</div>
-                    <div className="item-meta">
-                      {folder.item_count !== undefined ? `${folder.item_count} items • ` : ''}
-                      {formatDate(folder.created_at)}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="item-actions">
-                  {user.role === 'admin' && (
-                    <>
-                      <button
-                        className="btn-icon"
-                        title="Ubah nama folder"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setRenameTarget({ type: 'folder', id: folder.id, name: folder.name });
-                          setRenameInput(folder.name);
-                        }}
-                      >
-                        <Edit2 size={16} />
-                      </button>
-                      <button
-                        className="btn-icon delete"
-                        title="Hapus folder"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDeleteTarget({ type: 'folder', id: folder.id, name: folder.name });
-                        }}
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </>
-                  )}
-                  <button className="btn-open" onClick={() => navigateToFolder(folder.id)}>
-                    <Folder size={15} fill="currentColor" />
-                    Open
-                  </button>
-                </div>
-              </div>
-            ))}
-
-            {/* FILES LIST */}
-            {files.map((file) => {
-              const isApk = file.name.toLowerCase().endsWith('.apk');
+            {/* FOLDERS */}
+            {filteredFolders.map((folder) => {
+              const { dateStr, timeStr } = formatDateParts(folder.created_at);
               return (
-                <div key={file.id} className="item-card">
-                  <div className="item-left">
-                    <div className={`item-badge ${isApk ? 'apk' : 'file'}`}>
-                      {renderFileIcon(file)}
+                <div key={folder.id} className="item-row-card">
+                  <div
+                    className="item-row-left"
+                    onClick={() => navigateToFolder(folder.id)}
+                  >
+                    <div className="item-folder-badge">
+                      <Folder size={20} fill="currentColor" strokeWidth={0} />
                     </div>
-                    <div className="item-details">
-                      <div className="item-name" title={file.name}>{file.name}</div>
-                      <div className="item-meta">{formatFileSize(file.size)} • {formatDate(file.created_at)}</div>
-                    </div>
+                    <span className="item-row-title">{folder.name}</span>
                   </div>
 
-                  <div className="item-actions">
+                  <div className="item-row-right">
+                    <div className="item-row-date">
+                      <span>{dateStr}</span>
+                      <span>{timeStr}</span>
+                    </div>
+
                     {user.role === 'admin' && (
-                      <>
+                      <div style={{ display: 'flex', gap: '6px' }}>
                         <button
-                          className="btn-icon"
-                          title="Ubah nama file"
-                          onClick={() => { setRenameTarget({ type: 'file', id: file.id, name: file.name }); setRenameInput(file.name); }}
+                          className="btn-icon-admin"
+                          title="Ubah nama"
+                          onClick={() => {
+                            setRenameTarget({ type: 'folder', id: folder.id, name: folder.name });
+                            setRenameInput(folder.name);
+                          }}
                         >
-                          <Edit2 size={16} />
+                          <Edit2 size={13} />
                         </button>
                         <button
-                          className="btn-icon delete"
+                          className="btn-icon-admin delete"
+                          title="Hapus folder"
+                          onClick={() => setDeleteTarget({ type: 'folder', id: folder.id, name: folder.name })}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    )}
+
+                    <button
+                      className="item-btn-open"
+                      onClick={() => navigateToFolder(folder.id)}
+                    >
+                      <span>Open</span>
+                      <span>→</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* FILES */}
+            {filteredFiles.map((file) => {
+              const isApk = file.name.toLowerCase().endsWith('.apk');
+              const { dateStr, timeStr } = formatDateParts(file.created_at);
+              return (
+                <div key={file.id} className="item-row-card">
+                  <div className="item-row-left">
+                    <div className={`item-file-badge ${isApk ? 'apk' : ''}`}>
+                      {renderFileIcon(file)}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                      <span className="item-row-title" title={file.name}>
+                        {file.name}
+                      </span>
+                      <span style={{ fontSize: '0.74rem', color: '#656b7c', fontFamily: 'var(--font-mono)' }}>
+                        {formatFileSize(file.size)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="item-row-right">
+                    <div className="item-row-date">
+                      <span>{dateStr}</span>
+                      <span>{timeStr}</span>
+                    </div>
+
+                    {user.role === 'admin' && (
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button
+                          className="btn-icon-admin"
+                          title="Ubah nama"
+                          onClick={() => {
+                            setRenameTarget({ type: 'file', id: file.id, name: file.name });
+                            setRenameInput(file.name);
+                          }}
+                        >
+                          <Edit2 size={13} />
+                        </button>
+                        <button
+                          className="btn-icon-admin delete"
                           title="Hapus file"
                           onClick={() => setDeleteTarget({ type: 'file', id: file.id, name: file.name })}
                         >
-                          <Trash2 size={16} />
+                          <Trash2 size={13} />
                         </button>
-                      </>
+                      </div>
                     )}
-                    <button className="btn-icon" title="Salin tautan unduhan langsung" onClick={() => copyDirectLink(file)}>
-                      <LinkIcon size={16} />
-                    </button>
+
                     <button
-                      type="button"
-                      className="btn-download"
-                      title="Unduh file ini"
+                      className="btn-icon-admin"
+                      title="Salin tautan langsung"
+                      onClick={() => copyDirectLink(file)}
+                    >
+                      <LinkIcon size={13} />
+                    </button>
+
+                    <button
+                      className="item-btn-download"
                       onClick={() => handleDownloadFile(file)}
                       disabled={downloadingFileId === file.id}
-                      style={{ cursor: downloadingFileId === file.id ? 'wait' : 'pointer' }}
                     >
                       {downloadingFileId === file.id ? (
-                        <RotateCw size={16} style={{ animation: 'spin 1s linear infinite' }} />
+                        <RotateCw size={13} style={{ animation: 'spin 1s linear infinite' }} />
                       ) : (
-                        <Download size={16} strokeWidth={2.8} />
+                        <Download size={13} />
                       )}
-                      {downloadingFileId === file.id ? 'Mengunduh...' : 'Download'}
+                      <span>Download</span>
+                      <span>→</span>
                     </button>
                   </div>
                 </div>
@@ -1011,32 +1179,178 @@ export default function FileHansWYApp() {
           </div>
         )}
 
-        {/* Footer Counter */}
-        <div className="footer-counter">
-          Showing {totalItemCount} {totalItemCount === 1 ? 'item' : 'items'}
+        {/* Sub-footer Info */}
+        <div className="sub-footer-info">
+          <span>
+            Showing {totalVisibleItems} of {folders.length + files.length} items
+          </span>
+          <span>Files, without the clutter.</span>
         </div>
+
+        {/* ============================================================
+            SPONSOR / AD RESPONSIVE BANNER BOX
+            ============================================================ */}
+        <section className="sponsor-ad-box">
+          <span className="sponsor-ad-tag">AD</span>
+          <div className="sponsor-ad-label">
+            <span>Sponsor space</span>
+            <span className="sponsor-ad-pill">Responsive banner</span>
+          </div>
+          <span className="sponsor-ad-tag">AD SPACE</span>
+        </section>
+
+        {/* ============================================================
+            BOTTOM SITE FOOTER
+            ============================================================ */}
+        <footer className="site-footer-bar">
+          <div className="site-footer-brand">
+            <span className="footer-brand-name">ZETSU</span>
+            <span style={{ color: '#888e9d' }}>FILES</span>
+            <span className="footer-brand-tagline">Pick a folder. Find your version.</span>
+          </div>
+          <span
+            className="footer-disclaimer-btn"
+            onClick={() => setShowDisclaimerModal(true)}
+          >
+            Disclaimer
+          </span>
+        </footer>
       </main>
 
-      {/* ------------------------------------------------------------------ */}
-      {/* 3. MODALS & DIALOGS */}
-      {/* ------------------------------------------------------------------ */}
+      {/* ============================================================
+          3. MODALS (DISCLAIMER, CHANGELOG, LOGIN, FOLDER, UPLOAD)
+          ============================================================ */}
+
+      {/* BEFORE YOU DOWNLOAD / DISCLAIMER MODAL (GAMBAR 1) */}
+      {showDisclaimerModal && (
+        <div className="modal-overlay" onClick={() => setShowDisclaimerModal(false)}>
+          <div className="modal-dialog-zetsu" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-zetsu">
+              <div>
+                <div className="modal-pretitle">BEFORE YOU DOWNLOAD</div>
+                <h3 className="modal-title-zetsu">
+                  Use at your own risk<span className="accent-dot">.</span>
+                </h3>
+              </div>
+              <button
+                className="modal-close-btn"
+                onClick={() => setShowDisclaimerModal(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-text-body">
+              <p>
+                Use files at your discretion. Back up your data before replacing an app. Results may vary by device, Android version, and APK variant.
+              </p>
+              <p>
+                Modified apps may cause crashes or account restrictions. Security and compatibility are not guaranteed.
+              </p>
+            </div>
+
+            <div className="modal-note-box">
+              Areas marked AD contain sponsored content. Download buttons appear in file rows or file details.
+            </div>
+
+            <button
+              className="btn-zetsu-primary"
+              onClick={() => setShowDisclaimerModal(false)}
+            >
+              I understand
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* CHANGELOG NOTES MODAL */}
+      {showChangelogModal && (
+        <div className="modal-overlay" onClick={() => setShowChangelogModal(false)}>
+          <div className="modal-dialog-zetsu" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-zetsu">
+              <div>
+                <div className="modal-pretitle">CHANGELOG ARCHIVE</div>
+                <h3 className="modal-title-zetsu">
+                  Release Notes<span className="accent-dot">.</span>
+                </h3>
+              </div>
+              <button
+                className="modal-close-btn"
+                onClick={() => setShowChangelogModal(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-text-body" style={{ maxHeight: '320px', overflowY: 'auto' }}>
+              <div style={{ borderLeft: '2px solid var(--accent-red)', paddingLeft: '12px', marginBottom: '14px' }}>
+                <b style={{ color: '#ffffff' }}>23 Oct 2026 - 21:00 WIB</b>
+                <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
+                  • Pembaruan tampilan Zetsu File Archive dengan warna tema banner animasi.
+                  <br />• Integrasi auto-play video banner tanpa tombol play.
+                  <br />• Fitur pencarian folder & file langsung.
+                </p>
+              </div>
+
+              <div style={{ borderLeft: '2px solid #2d303d', paddingLeft: '12px', marginBottom: '14px' }}>
+                <b style={{ color: '#ffffff' }}>14 Oct 2026 - 14:34 WIB</b>
+                <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
+                  • Initial release Zetsu Launcher & Tools package.
+                  <br />• Pembaruan kompabilitas Android 10-13.
+                </p>
+              </div>
+            </div>
+
+            <button
+              className="btn-zetsu-primary"
+              onClick={() => setShowChangelogModal(false)}
+            >
+              Tutup Catatan
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ADMIN LOGIN MODAL */}
       {showLoginModal && (
         <div className="modal-overlay" onClick={() => setShowLoginModal(false)}>
-          <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3 className="modal-title">Login Admin HansWY</h3>
-              <button className="btn-icon" onClick={() => setShowLoginModal(false)}><X size={18} /></button>
+          <div className="modal-dialog-zetsu" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-zetsu">
+              <div>
+                <div className="modal-pretitle">AUTHENTICATION</div>
+                <h3 className="modal-title-zetsu">
+                  Login Admin Zetsu<span className="accent-dot">.</span>
+                </h3>
+              </div>
+              <button
+                className="modal-close-btn"
+                onClick={() => setShowLoginModal(false)}
+              >
+                <X size={16} />
+              </button>
             </div>
+
             <form onSubmit={handleLogin}>
               <div className="modal-body">
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '16px' }}>
-                  Masukkan password admin untuk mengakses fitur upload, buat folder, rename, dan hapus.
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', marginBottom: '14px' }}>
+                  Masukkan password admin untuk mengelola file, folder, dan upload.
                 </p>
                 {authError && (
-                  <div style={{ padding: '10px 14px', backgroundColor: 'rgba(230, 40, 49, 0.15)', border: '1px solid var(--accent-red)', borderRadius: 'var(--radius-md)', color: '#ff6b75', fontSize: '0.85rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <AlertCircle size={16} /> {authError}
+                  <div
+                    style={{
+                      padding: '8px 12px',
+                      backgroundColor: 'rgba(207, 60, 44, 0.15)',
+                      border: '1px solid var(--accent-red)',
+                      borderRadius: 'var(--radius-sm)',
+                      color: '#ff6b75',
+                      fontSize: '0.82rem',
+                      marginBottom: '14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                    }}
+                  >
+                    <AlertCircle size={15} /> {authError}
                   </div>
                 )}
                 <div className="form-group">
@@ -1053,8 +1367,16 @@ export default function FileHansWYApp() {
                 </div>
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn-cancel" onClick={() => setShowLoginModal(false)}>Batal</button>
-                <button type="submit" className="btn-red">Login Admin</button>
+                <button
+                  type="button"
+                  className="btn-cancel"
+                  onClick={() => setShowLoginModal(false)}
+                >
+                  Batal
+                </button>
+                <button type="submit" className="btn-admin-action primary">
+                  Login Admin
+                </button>
               </div>
             </form>
           </div>
@@ -1064,31 +1386,57 @@ export default function FileHansWYApp() {
       {/* CREATE FOLDER MODAL */}
       {showCreateFolderModal && (
         <div className="modal-overlay" onClick={() => !creatingFolder && setShowCreateFolderModal(false)}>
-          <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3 className="modal-title">Buat Folder Baru</h3>
-              <button className="btn-icon" disabled={creatingFolder} onClick={() => setShowCreateFolderModal(false)}><X size={18} /></button>
+          <div className="modal-dialog-zetsu" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-zetsu">
+              <div>
+                <div className="modal-pretitle">MANAGEMENT</div>
+                <h3 className="modal-title-zetsu">
+                  Buat Folder Baru<span className="accent-dot">.</span>
+                </h3>
+              </div>
+              <button
+                className="modal-close-btn"
+                disabled={creatingFolder}
+                onClick={() => setShowCreateFolderModal(false)}
+              >
+                <X size={16} />
+              </button>
             </div>
             <form onSubmit={handleCreateFolder}>
-              <div className="modal-body">
-                <div className="form-group">
-                  <label className="form-label">Nama Folder</label>
-                  <input
-                    type="text"
-                    className="form-input"
-                    placeholder="Contoh: ANDROID 13, LAUNCHER, TOOLS..."
-                    value={newFolderName}
-                    onChange={(e) => setNewFolderName(e.target.value)}
-                    autoFocus
-                    required
-                    disabled={creatingFolder}
-                  />
-                </div>
+              <div className="form-group">
+                <label className="form-label">Nama Folder</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Contoh: LAUNCHER, TOOLS, DELTA..."
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  autoFocus
+                  required
+                  disabled={creatingFolder}
+                />
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn-cancel" disabled={creatingFolder} onClick={() => setShowCreateFolderModal(false)}>Batal</button>
-                <button type="submit" className="btn-red" disabled={creatingFolder}>
-                  {creatingFolder ? <><RotateCw size={15} style={{ animation: 'spin 1s linear infinite' }} /> Membuat...</> : 'Buat Folder'}
+                <button
+                  type="button"
+                  className="btn-cancel"
+                  disabled={creatingFolder}
+                  onClick={() => setShowCreateFolderModal(false)}
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="btn-admin-action primary"
+                  disabled={creatingFolder}
+                >
+                  {creatingFolder ? (
+                    <>
+                      <RotateCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> Membuat...
+                    </>
+                  ) : (
+                    'Buat Folder'
+                  )}
                 </button>
               </div>
             </form>
@@ -1096,163 +1444,40 @@ export default function FileHansWYApp() {
         </div>
       )}
 
-      {/* BULK UPLOAD MODAL */}
-      {showUploadModal && (
-        <div className="modal-overlay" onClick={closeUploadModal}>
-          <div
-            className="modal-dialog upload-modal-wide"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-header">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Files size={20} color="var(--accent-red)" />
-                <h3 className="modal-title">Bulk Upload File</h3>
-              </div>
-              <button className="btn-icon" disabled={isProcessingQueue} onClick={closeUploadModal}><X size={18} /></button>
-            </div>
-
-            <div className="modal-body">
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '14px' }}>
-                Lokasi target:{' '}
-                <b style={{ color: '#ffffff' }}>{currentFolder ? currentFolder.name : 'Root Directory'}</b>
-              </p>
-
-              {/* Drag & Drop Zone */}
-              <div
-                className={`drop-zone ${isDragOver ? 'drag-over' : ''}`}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                onClick={() => !isProcessingQueue && bulkFileInputRef.current?.click()}
-              >
-                <Upload size={32} color={isDragOver ? 'var(--accent-red)' : 'var(--text-muted)'} style={{ margin: '0 auto 10px', display: 'block', transition: 'color 0.2s' }} />
-                <p style={{ fontWeight: 600, color: isDragOver ? 'var(--accent-red)' : '#ffffff', marginBottom: '4px', textAlign: 'center', transition: 'color 0.2s' }}>
-                  {isDragOver ? 'Lepaskan file di sini...' : 'Seret & lepas file di sini'}
-                </p>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', textAlign: 'center' }}>
-                  atau klik untuk memilih beberapa file sekaligus
-                </p>
-                <input
-                  ref={bulkFileInputRef}
-                  type="file"
-                  multiple
-                  style={{ display: 'none' }}
-                  onChange={handleBulkFileChange}
-                  disabled={isProcessingQueue}
-                />
-              </div>
-
-              {/* Upload Queue */}
-              {uploadQueue.length > 0 && (
-                <div className="upload-queue">
-                  {/* Queue Summary */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                      {uploadQueue.length} file dalam antrean
-                      {successCount > 0 && <span style={{ color: '#52e38c' }}> · {successCount} berhasil</span>}
-                      {errorCount > 0 && <span style={{ color: '#ff4757' }}> · {errorCount} gagal</span>}
-                    </span>
-                    {!isProcessingQueue && (successCount > 0 || errorCount > 0) && (
-                      <button
-                        onClick={clearCompletedFromQueue}
-                        style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textDecoration: 'underline', cursor: 'pointer' }}
-                      >
-                        Hapus selesai
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Queue Items */}
-                  <div className="queue-list">
-                    {uploadQueue.map((item) => (
-                      <div key={item.id} className="queue-item">
-                        <div className="queue-icon">
-                          {item.status === 'success' && <CheckCircle2 size={16} color="#52e38c" />}
-                          {item.status === 'error' && <XCircle size={16} color="#ff4757" />}
-                          {item.status === 'uploading' && <Loader2 size={16} color="var(--accent-red)" style={{ animation: 'spin 1s linear infinite' }} />}
-                          {item.status === 'queued' && <Clock size={16} color="var(--text-muted)" />}
-                        </div>
-                        <div className="queue-file-info">
-                          <div className="queue-file-icon">
-                            {getFileIconForQueue(item.file)}
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div className="queue-filename">{item.file.name}</div>
-                            {item.errorMessage && (
-                              <div className="queue-error">{item.errorMessage}</div>
-                            )}
-                            {item.status === 'uploading' && (
-                              <div className="queue-progress-bar">
-                                <div className="queue-progress-fill" style={{ width: `${item.progress}%` }} />
-                              </div>
-                            )}
-                          </div>
-                          <div className="queue-filesize">{formatFileSize(item.file.size)}</div>
-                        </div>
-                        {item.status !== 'uploading' && !isProcessingQueue && (
-                          <button
-                            className="btn-icon"
-                            style={{ padding: '2px', flexShrink: 0 }}
-                            onClick={() => removeFromQueue(item.id)}
-                            title="Hapus dari antrean"
-                          >
-                            <X size={14} />
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="modal-footer">
-              <button type="button" className="btn-cancel" disabled={isProcessingQueue} onClick={closeUploadModal}>
-                {isProcessingQueue ? 'Sedang Upload...' : 'Tutup'}
-              </button>
-              <button
-                type="button"
-                className="btn-red"
-                disabled={isProcessingQueue || queuedCount === 0}
-                style={{ opacity: (isProcessingQueue || queuedCount === 0) ? 0.6 : 1 }}
-                onClick={startBulkUpload}
-              >
-                {isProcessingQueue ? (
-                  <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Mengunggah {uploadingCount > 0 ? `(${uploadingCount})` : ''}...</>
-                ) : (
-                  <><Upload size={16} /> Unggah {queuedCount > 0 ? `${queuedCount} File` : 'Semua'}</>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* RENAME MODAL */}
       {renameTarget && (
         <div className="modal-overlay" onClick={() => setRenameTarget(null)}>
-          <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3 className="modal-title">Ubah Nama {renameTarget.type === 'folder' ? 'Folder' : 'File'}</h3>
-              <button className="btn-icon" onClick={() => setRenameTarget(null)}><X size={18} /></button>
+          <div className="modal-dialog-zetsu" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-zetsu">
+              <div>
+                <div className="modal-pretitle">MANAGEMENT</div>
+                <h3 className="modal-title-zetsu">
+                  Ubah Nama {renameTarget.type === 'folder' ? 'Folder' : 'File'}<span className="accent-dot">.</span>
+                </h3>
+              </div>
+              <button className="modal-close-btn" onClick={() => setRenameTarget(null)}>
+                <X size={16} />
+              </button>
             </div>
             <form onSubmit={handleRename}>
-              <div className="modal-body">
-                <div className="form-group">
-                  <label className="form-label">Nama Baru</label>
-                  <input
-                    type="text"
-                    className="form-input"
-                    value={renameInput}
-                    onChange={(e) => setRenameInput(e.target.value)}
-                    autoFocus
-                    required
-                  />
-                </div>
+              <div className="form-group">
+                <label className="form-label">Nama Baru</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={renameInput}
+                  onChange={(e) => setRenameInput(e.target.value)}
+                  autoFocus
+                  required
+                />
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn-cancel" onClick={() => setRenameTarget(null)}>Batal</button>
-                <button type="submit" className="btn-red">Simpan Perubahan</button>
+                <button type="button" className="btn-cancel" onClick={() => setRenameTarget(null)}>
+                  Batal
+                </button>
+                <button type="submit" className="btn-admin-action primary">
+                  Simpan Perubahan
+                </button>
               </div>
             </form>
           </div>
@@ -1262,175 +1487,159 @@ export default function FileHansWYApp() {
       {/* DELETE CONFIRMATION MODAL */}
       {deleteTarget && (
         <div className="modal-overlay" onClick={() => !deleting && setDeleteTarget(null)}>
-          <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3 className="modal-title">Konfirmasi Penghapusan</h3>
-              <button className="btn-icon" disabled={deleting} onClick={() => setDeleteTarget(null)}><X size={18} /></button>
-            </div>
-            <div className="modal-body">
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem', lineHeight: '1.5' }}>
-                Apakah Anda yakin ingin menghapus {deleteTarget.type === 'folder' ? 'folder' : 'file'}{' '}
-                <b style={{ color: '#ffffff' }}>"{deleteTarget.name}"</b>?
-              </p>
-              {deleteTarget.type === 'folder' && (
-                <p style={{ color: '#ff6b75', fontSize: '0.82rem', marginTop: '10px' }}>
-                  ⚠️ Perhatian: Seluruh subfolder dan file di dalam folder ini juga akan terhapus secara permanen.
-                </p>
-              )}
-            </div>
-            <div className="modal-footer">
-              <button type="button" className="btn-cancel" disabled={deleting} onClick={() => setDeleteTarget(null)}>Batal</button>
+          <div className="modal-dialog-zetsu" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-zetsu">
+              <div>
+                <div className="modal-pretitle">DELETE CONFIRMATION</div>
+                <h3 className="modal-title-zetsu">
+                  Hapus {deleteTarget.type === 'folder' ? 'Folder' : 'File'}<span className="accent-dot">?</span>
+                </h3>
+              </div>
               <button
-                type="button"
-                className="btn-red"
-                style={{ backgroundColor: '#ff4757', opacity: deleting ? 0.7 : 1 }}
+                className="modal-close-btn"
                 disabled={deleting}
-                onClick={handleDelete}
+                onClick={() => setDeleteTarget(null)}
               >
-                {deleting ? <><RotateCw size={15} style={{ animation: 'spin 1s linear infinite' }} /> Menghapus...</> : 'Ya, Hapus'}
+                <X size={16} />
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* AUTO DOWNLOAD MODAL / CARD */}
-      {(autoDownloadFile || autoDownloadLoading || autoDownloadError) && (
-        <div
-          className="modal-overlay"
-          onClick={() => {
-            setAutoDownloadFile(null);
-            setAutoDownloadError('');
-            const newUrl = window.location.pathname;
-            window.history.replaceState({}, '', newUrl);
-          }}
-        >
-          <div className="modal-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
-            <div className="modal-header">
-              <h3 className="modal-title">
-                {autoDownloadLoading ? 'Mencari File...' : autoDownloadError ? 'Gagal Mengunduh' : 'Unduhan File'}
-              </h3>
-              <button
-                className="btn-icon"
-                onClick={() => {
-                  setAutoDownloadFile(null);
-                  setAutoDownloadError('');
-                  const newUrl = window.location.pathname;
-                  window.history.replaceState({}, '', newUrl);
-                }}
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <div className="modal-body" style={{ textAlign: 'center', padding: '24px 20px' }}>
-              {autoDownloadLoading && (
-                <div>
-                  <RotateCw size={36} color="var(--accent-red)" style={{ animation: 'spin 1s linear infinite', margin: '0 auto 14px auto' }} />
-                  <p style={{ color: 'var(--text-secondary)' }}>Menghubungkan dan menyiapkan unduhan...</p>
-                </div>
-              )}
-
-              {autoDownloadError && (
-                <div>
-                  <AlertCircle size={40} color="#ff4757" style={{ margin: '0 auto 12px auto' }} />
-                  <p style={{ color: '#ff6b75', fontWeight: 600 }}>{autoDownloadError}</p>
-                  <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '8px' }}>
-                    Pastikan tautan yang Anda masukkan benar atau file belum dihapus.
-                  </p>
-                </div>
-              )}
-
-              {autoDownloadFile && (
-                <div>
-                  <div
-                    style={{
-                      width: '64px',
-                      height: '64px',
-                      borderRadius: '16px',
-                      background: 'rgba(230, 40, 49, 0.1)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      margin: '0 auto 16px auto',
-                      color: 'var(--accent-red)',
-                    }}
-                  >
-                    <Download size={32} />
-                  </div>
-                  <h4 style={{ fontSize: '1.1rem', fontWeight: 600, color: '#ffffff', marginBottom: '6px', wordBreak: 'break-word' }}>
-                    {autoDownloadFile.name}
-                  </h4>
-                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '18px' }}>
-                    Ukuran: <b>{formatFileSize(autoDownloadFile.size)}</b>
-                    {autoDownloadFile.name.endsWith('.apk') && (
-                      <span style={{ color: '#52e38c', marginLeft: '8px' }}>✓ File APK Android</span>
-                    )}
-                  </p>
-
-                  <div
-                    style={{
-                      background: 'rgba(255, 255, 255, 0.04)',
-                      borderRadius: '10px',
-                      padding: '12px 14px',
-                      fontSize: '0.82rem',
-                      color: 'var(--text-muted)',
-                      marginBottom: '20px',
-                      textAlign: 'left',
-                      lineHeight: '1.4',
-                    }}
-                  >
-                    💡 Unduhan telah dipicu otomatis. Jika di ponsel Anda unduhan tidak berjalan otomatis, silakan klik tombol di bawah untuk mengunduh langsung.
-                  </div>
-
-                  <a
-                    href={autoDownloadFile.is_chunked ? `/api/download/${autoDownloadFile.id}` : (autoDownloadFile.download_url.startsWith('http') ? autoDownloadFile.download_url : `${typeof window !== 'undefined' ? window.location.origin : ''}${autoDownloadFile.download_url}`)}
-                    download={autoDownloadFile.name}
-                    className="btn-red"
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      textDecoration: 'none',
-                      width: '100%',
-                      padding: '12px',
-                      fontSize: '0.95rem',
-                      fontWeight: 600,
-                    }}
-                  >
-                    <Download size={18} />
-                    Unduh File Sekarang
-                  </a>
-                </div>
-              )}
-            </div>
-            <div className="modal-footer" style={{ justifyContent: 'center' }}>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '20px' }}>
+              Apakah Anda yakin ingin menghapus <b>"{deleteTarget.name}"</b>? Tindakan ini tidak dapat dibatalkan.
+            </p>
+            <div className="modal-footer">
               <button
                 type="button"
                 className="btn-cancel"
-                onClick={() => {
-                  setAutoDownloadFile(null);
-                  setAutoDownloadError('');
-                  const newUrl = window.location.pathname;
-                  window.history.replaceState({}, '', newUrl);
-                }}
+                disabled={deleting}
+                onClick={() => setDeleteTarget(null)}
               >
-                Tutup
+                Batal
+              </button>
+              <button
+                type="button"
+                className="btn-admin-action primary"
+                style={{ backgroundColor: '#e53935' }}
+                disabled={deleting}
+                onClick={handleDelete}
+              >
+                {deleting ? 'Menghapus...' : 'Ya, Hapus'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ------------------------------------------------------------------ */}
-      {/* 4. FLOATING TOAST NOTIFICATIONS */}
-      {/* ------------------------------------------------------------------ */}
+      {/* BULK UPLOAD MODAL */}
+      {showUploadModal && (
+        <div className="modal-overlay" onClick={closeUploadModal}>
+          <div className="modal-dialog-zetsu upload-modal-wide" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-zetsu">
+              <div>
+                <div className="modal-pretitle">FILE STORAGE</div>
+                <h3 className="modal-title-zetsu">
+                  Upload File<span className="accent-dot">.</span>
+                </h3>
+              </div>
+              <button className="modal-close-btn" disabled={isProcessingQueue} onClick={closeUploadModal}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="drop-zone" onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop} onClick={() => !isProcessingQueue && bulkFileInputRef.current?.click()}>
+              <Upload size={28} color={isDragOver ? 'var(--accent-red)' : 'var(--text-muted)'} style={{ margin: '0 auto 8px', display: 'block' }} />
+              <p style={{ fontWeight: 600, color: '#ffffff', marginBottom: '2px', fontSize: '0.9rem' }}>
+                Seret & lepas file ke sini
+              </p>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>atau klik untuk memilih file</p>
+              <input
+                ref={bulkFileInputRef}
+                type="file"
+                multiple
+                style={{ display: 'none' }}
+                onChange={handleBulkFileChange}
+                disabled={isProcessingQueue}
+              />
+            </div>
+
+            {uploadQueue.length > 0 && (
+              <div className="upload-queue">
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                  <span>Antrean ({uploadQueue.length} file)</span>
+                  {successCount > 0 && <span style={{ color: '#52e38c' }}>{successCount} selesai</span>}
+                </div>
+
+                <div className="queue-list">
+                  {uploadQueue.map((item) => (
+                    <div key={item.id} className="queue-item">
+                      <div className="queue-file-info">
+                        <span className="queue-filename">{item.file.name}</span>
+                        <span className="queue-filesize">{formatFileSize(item.file.size)}</span>
+                      </div>
+                      {item.status === 'uploading' && <span style={{ fontSize: '0.72rem', color: 'var(--accent-red)' }}>{item.progress}%</span>}
+                      {item.status === 'success' && <Check size={14} color="#52e38c" />}
+                      {item.status === 'error' && <span style={{ fontSize: '0.72rem', color: '#ff6b75' }}>Gagal</span>}
+                      {item.status === 'queued' && !isProcessingQueue && (
+                        <button onClick={() => removeFromQueue(item.id)} style={{ color: '#656b7c' }}>
+                          <X size={13} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="modal-footer">
+              <button type="button" className="btn-cancel" disabled={isProcessingQueue} onClick={closeUploadModal}>
+                Tutup
+              </button>
+              {queuedCount > 0 && (
+                <button
+                  type="button"
+                  className="btn-admin-action primary"
+                  disabled={isProcessingQueue}
+                  onClick={startBatchUpload}
+                >
+                  {isProcessingQueue ? 'Mengunggah...' : `Unggah (${queuedCount} file)`}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AUTO DOWNLOAD POPUP MODAL */}
+      {autoDownloadFile && (
+        <div className="modal-overlay" onClick={() => setAutoDownloadFile(null)}>
+          <div className="modal-dialog-zetsu" onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center' }}>
+            <div className="modal-header-zetsu" style={{ justifyContent: 'center' }}>
+              <h3 className="modal-title-zetsu">Unduhan File Zetsu</h3>
+            </div>
+            <div style={{ margin: '16px 0' }}>
+              <Download size={36} color="var(--accent-red)" style={{ margin: '0 auto 12px' }} />
+              <h4 style={{ color: '#ffffff', fontSize: '1rem', marginBottom: '6px' }}>{autoDownloadFile.name}</h4>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.84rem' }}>
+                Ukuran: {formatFileSize(autoDownloadFile.size)}
+              </p>
+            </div>
+            <a
+              href={autoDownloadFile.is_chunked ? `/api/download/${autoDownloadFile.id}` : autoDownloadFile.download_url}
+              download={autoDownloadFile.name}
+              className="btn-zetsu-primary"
+            >
+              Unduh Lagi Sekarang
+            </a>
+          </div>
+        </div>
+      )}
+
+      {/* TOASTS */}
       <div className="toast-container">
         {toasts.map((toast) => (
           <div key={toast.id} className={`toast ${toast.type}`}>
-            {toast.type === 'success' && <Check size={18} color="#52e38c" />}
-            {toast.type === 'error' && <AlertCircle size={18} color="#e62831" />}
-            {toast.type === 'info' && <Zap size={18} color="#f59e0b" />}
+            {toast.type === 'success' && <Check size={16} color="#52e38c" />}
+            {toast.type === 'error' && <AlertCircle size={16} color="#cf3c2c" />}
+            {toast.type === 'info' && <Clock size={16} color="#eab308" />}
             <span>{toast.text}</span>
           </div>
         ))}
@@ -1438,8 +1647,12 @@ export default function FileHansWYApp() {
 
       <style jsx global>{`
         @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
+          from {
+            transform: rotate(0deg);
+          }
+          to {
+            transform: rotate(360deg);
+          }
         }
       `}</style>
     </div>

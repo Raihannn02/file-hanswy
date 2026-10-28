@@ -15,6 +15,7 @@ export interface FileItem {
   mime_type: string;
   storage_path: string;
   download_url: string;
+  is_chunked?: boolean;
   created_at: string;
   updated_at: string;
 }

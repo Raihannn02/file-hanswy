@@ -27,51 +27,47 @@ const DB_FILE = path.join(DATA_DIR, 'db.json');
 const UPLOADS_DIR = isVercel ? path.join(os.tmpdir(), 'hanswy-uploads') : path.join(process.cwd(), 'public', 'uploads');
 
 function getInitialSeedData(): LocalDatabase {
-  const rootArceusId = 'arceus-folder-id';
-  const rootDeltaId = 'delta-lite-folder-id';
   const rootLauncherId = 'launcher-folder-id';
-  const android10Id = 'android-10-folder-id';
-  const android12Id = 'android-12-folder-id';
+  const rootDeltaId = 'lite-delta-folder-id';
+  const rootToolsId = 'tools-folder-id';
 
   const folders: FolderItem[] = [
-    {
-      id: rootArceusId,
-      name: 'ARCEUS',
-      parent_id: null,
-      created_at: '2026-10-14T13:05:34Z',
-      updated_at: '2026-10-14T13:05:34Z',
-    },
-    {
-      id: rootDeltaId,
-      name: 'DELTA LITE',
-      parent_id: null,
-      created_at: '2026-10-14T09:51:51Z',
-      updated_at: '2026-10-14T09:51:51Z',
-    },
     {
       id: rootLauncherId,
       name: 'LAUNCHER',
       parent_id: null,
-      created_at: '2026-10-14T13:48:56Z',
-      updated_at: '2026-10-14T13:48:56Z',
+      created_at: '2026-10-14T14:34:00Z',
+      updated_at: '2026-10-14T14:34:00Z',
     },
     {
-      id: android10Id,
-      name: 'ANDROID 10',
-      parent_id: rootArceusId,
-      created_at: '2026-10-14T13:05:42Z',
-      updated_at: '2026-10-14T13:05:42Z',
+      id: rootDeltaId,
+      name: 'LITE DELTA',
+      parent_id: null,
+      created_at: '2026-10-23T19:53:00Z',
+      updated_at: '2026-10-23T19:53:00Z',
     },
     {
-      id: android12Id,
-      name: 'ANDROID 12',
-      parent_id: rootArceusId,
-      created_at: '2026-10-14T13:06:41Z',
-      updated_at: '2026-10-14T13:06:41Z',
+      id: rootToolsId,
+      name: 'TOOLS',
+      parent_id: null,
+      created_at: '2026-10-17T05:05:00Z',
+      updated_at: '2026-10-17T05:05:00Z',
     },
   ];
 
-  const files: FileItem[] = [];
+  const files: FileItem[] = [
+    {
+      id: 'file-apk-01',
+      name: 'ZETSU LAUNCHER 01-2.742.1059.apk',
+      folder_id: rootLauncherId,
+      size: 108991283,
+      mime_type: 'application/vnd.android.package-archive',
+      storage_path: 'demo/launcher-01.apk',
+      download_url: '/uploads/sample-package.apk',
+      created_at: '2026-10-14T14:34:00Z',
+      updated_at: '2026-10-14T14:34:00Z',
+    },
+  ];
   return { folders, files };
 }
 

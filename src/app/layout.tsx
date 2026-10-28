@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'File HansWY - Fast & Secure Cloud Storage',
-  description: 'Penyimpanan dan pengelolaan file 24 jam dengan performa tinggi berbasis Vercel.',
+  title: 'Zetsu - File Archive | Download Center',
+  description: 'Zetsu File Archive - APKs, tools, and selected Zetsu releases.',
 };
 
 export default function RootLayout({
