@@ -4,6 +4,9 @@ import { getFile } from '@/lib/storage-engine';
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
+const GITHUB_OWNER = process.env.GITHUB_OWNER || process.env.NEXT_PUBLIC_GITHUB_OWNER || 'Raihannn02';
+const GITHUB_REPO = process.env.GITHUB_REPO || process.env.NEXT_PUBLIC_GITHUB_REPO || 'file-hanswy';
+
 export async function GET(
   req: NextRequest,
   props: { params: Promise<{ id: string }> }
@@ -36,7 +39,7 @@ export async function GET(
       });
     }
 
-    // Direct download (GitHub Release Asset / Local URL)
+    // 1. Direct download (single file GitHub Release Asset atau URL Lokal)
     if (!file.download_url.startsWith('chunked:')) {
       if (file.download_url.startsWith('http')) {
         return NextResponse.redirect(file.download_url, 302);
@@ -45,8 +48,51 @@ export async function GET(
       return NextResponse.redirect(`${origin}${file.download_url}`, 302);
     }
 
-    // Legacy chunked download (jika ada file lama)
-    return new NextResponse('Format chunked lama tidak didukung pada migrasi GitHub.', { status: 410 });
+    // 2. Chunked download (File > 3.5 MB): Stream parts dari GitHub secara seamless
+    const parts = file.download_url.split(':');
+    const totalChunks = parseInt(parts[1], 10);
+    const basePath = parts.slice(2).join(':');
+
+    const filename = file.name || 'download';
+    const asciiFilename = filename.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, '');
+    const encodedFilename = encodeURIComponent(filename);
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          for (let i = 0; i < totalChunks; i++) {
+            const partName = `${basePath}_part${i}`;
+            const partUrl = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/storage-files/${partName}`;
+
+            const res = await fetch(partUrl);
+            if (!res.ok || !res.body) {
+              throw new Error(`Gagal mengambil bagian ${i + 1}/${totalChunks} (HTTP ${res.status})`);
+            }
+
+            const reader = res.body.getReader();
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              controller.enqueue(value);
+            }
+          }
+          controller.close();
+        } catch (err) {
+          controller.error(err);
+        }
+      },
+    });
+
+    return new Response(stream, {
+      status: 200,
+      headers: {
+        'Content-Type': file.mime_type || 'application/vnd.android.package-archive',
+        'Content-Disposition': `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`,
+        'Content-Length': file.size.toString(),
+        'Cache-Control': 'public, max-age=86400, s-maxage=86400',
+        'Accept-Ranges': 'none',
+      },
+    });
   } catch (err) {
     console.error('Download error:', err);
     return new NextResponse('Gagal memproses unduhan', { status: 500 });

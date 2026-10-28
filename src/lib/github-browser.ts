@@ -1,151 +1,91 @@
 /**
- * Client-Side GitHub Helper for Direct Browser Uploads
+ * Client-Side Upload Helper for File HansWY
  *
- * Mengunggah file langsung dari browser ke GitHub Releases API
- * (melewati batas serverless Vercel dan tanpa batasan Supabase 50MB)
- * GitHub Release Asset mendukung file hingga 2GB per asset.
+ * Mengunggah file dalam potongan chunk (3.5 MB per part) melalui endpoint /api/files/chunk.
+ * Keunggulan:
+ * 1. Tidak terkena batasan 4.5 MB Vercel Serverless Function (karena tiap chunk < 4 MB).
+ * 2. Tidak terkena masalah CORS GitHub uploads.github.com (karena server yang mengunggah ke GitHub).
+ * 3. Token GitHub tetap aman di server (tidak perlu diekspos ke browser).
+ * 4. Mendukung progress bar yang presisi untuk setiap file.
  */
 
-const GITHUB_TOKEN = process.env.NEXT_PUBLIC_GITHUB_TOKEN || '';
-const GITHUB_OWNER = process.env.NEXT_PUBLIC_GITHUB_OWNER || '';
-const GITHUB_REPO = process.env.NEXT_PUBLIC_GITHUB_REPO || '';
+// 3.5 MB per chunk (aman di bawah batas 4.5 MB Vercel)
+const CHUNK_SIZE = 3.5 * 1024 * 1024;
 
-const API_BASE = 'https://api.github.com';
-const FILES_TAG = 'storage-files';
-
-export const isBrowserGitHubReady = Boolean(
-  GITHUB_TOKEN &&
-  GITHUB_TOKEN.length > 10 &&
-  GITHUB_OWNER &&
-  GITHUB_REPO
-);
+export const isBrowserGitHubReady = true;
 
 interface UploadResult {
-  assetId: number;
+  assetId?: number;
   downloadUrl: string;
   storagePath: string;
   size: number;
 }
 
-/**
- * Mendapatkan ID release untuk tag storage-files (atau membuatnya jika belum ada)
- */
-async function getOrCreateFilesRelease(): Promise<{ id: number; upload_url: string }> {
-  const getRes = await fetch(`${API_BASE}/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tags/${FILES_TAG}`, {
-    headers: {
-      Authorization: `Bearer ${GITHUB_TOKEN}`,
-      Accept: 'application/vnd.github+json',
-    },
-  });
-
-  if (getRes.ok) {
-    const data = await getRes.json();
-    return { id: data.id, upload_url: data.upload_url };
-  }
-
-  if (getRes.status === 404) {
-    // Buat release baru
-    const createRes = await fetch(`${API_BASE}/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${GITHUB_TOKEN}`,
-        Accept: 'application/vnd.github+json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        tag_name: FILES_TAG,
-        name: 'File HansWY - Storage Files',
-        body: 'Internal storage for File HansWY uploads. Do not delete this release.',
-        draft: false,
-        prerelease: false,
-      }),
-    });
-
-    if (!createRes.ok) {
-      const err = await createRes.text();
-      throw new Error(`Gagal membuat release GitHub untuk files: ${err}`);
-    }
-
-    const data = await createRes.json();
-    return { id: data.id, upload_url: data.upload_url };
-  }
-
-  const errText = await getRes.text();
-  throw new Error(`Gagal memeriksa release GitHub: ${errText}`);
-}
-
-/**
- * Upload file langsung dari browser ke GitHub Release Asset dengan XMLHttpRequest untuk progress tracking
- */
 export async function uploadFileToGitHubBrowser(
   file: File,
   folderId: string | null,
   onProgress?: (percent: number) => void
 ): Promise<UploadResult> {
-  if (!isBrowserGitHubReady) {
-    throw new Error('Konfigurasi GitHub browser belum lengkap (NEXT_PUBLIC_GITHUB_TOKEN/OWNER/REPO).');
-  }
-
-  // 1. Dapatkan release
-  if (onProgress) onProgress(5);
-  const release = await getOrCreateFilesRelease();
-  if (onProgress) onProgress(15);
-
-  // 2. Siapkan nama asset
   const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
   const folderKey = folderId || 'root';
-  const assetName = `${folderKey}--${Date.now()}_${sanitizedName}`;
+  const storagePath = `${folderKey}--${Date.now()}_${sanitizedName}`;
+  const mimeType = file.type || 'application/octet-stream';
 
-  // 3. Upload ke endpoint uploads.github.com
-  const uploadUrl = `https://uploads.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/${release.id}/assets?name=${encodeURIComponent(assetName)}`;
+  const totalParts = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
 
-  return new Promise<UploadResult>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', uploadUrl, true);
+  if (onProgress) onProgress(5);
 
-    xhr.setRequestHeader('Authorization', `Bearer ${GITHUB_TOKEN}`);
-    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
-    xhr.setRequestHeader('Accept', 'application/vnd.github+json');
+  let lastResponseData: any = null;
 
-    if (xhr.upload && onProgress) {
-      xhr.upload.onprogress = (evt) => {
-        if (evt.lengthComputable) {
-          // Progress dari 15% sampai 85%
-          const pct = 15 + Math.round((evt.loaded / evt.total) * 70);
-          onProgress(pct);
-        }
-      };
+  for (let i = 0; i < totalParts; i++) {
+    const start = i * CHUNK_SIZE;
+    const end = Math.min(start + CHUNK_SIZE, file.size);
+    const chunkBlob = file.slice(start, end, mimeType);
+
+    const formData = new FormData();
+    formData.append('chunk', chunkBlob);
+    formData.append('partIndex', i.toString());
+    formData.append('totalParts', totalParts.toString());
+    formData.append('storagePath', storagePath);
+    formData.append('name', file.name);
+    formData.append('folderId', folderId || '');
+    formData.append('totalSize', file.size.toString());
+    formData.append('mimeType', mimeType);
+
+    const res = await fetch('/api/files/chunk', {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!res.ok) {
+      let errMessage = `Gagal mengunggah bagian ${i + 1}/${totalParts} (HTTP ${res.status})`;
+      try {
+        const errJson = await res.json();
+        if (errJson.error) errMessage = errJson.error;
+      } catch {
+        // ignore
+      }
+      throw new Error(errMessage);
     }
 
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          const res = JSON.parse(xhr.responseText);
-          resolve({
-            assetId: res.id,
-            downloadUrl: res.browser_download_url,
-            storagePath: assetName,
-            size: file.size,
-          });
-        } catch (e) {
-          reject(new Error('Gagal memproses respon dari GitHub'));
-        }
-      } else {
-        let msg = `GitHub upload error (${xhr.status})`;
-        try {
-          const res = JSON.parse(xhr.responseText);
-          if (res.message) msg = res.message;
-        } catch {
-          // ignore parse error
-        }
-        reject(new Error(msg));
-      }
-    };
+    const data = await res.json();
+    if (!data.success) {
+      throw new Error(data.error || `Gagal mengunggah bagian ${i + 1}/${totalParts}`);
+    }
 
-    xhr.onerror = () => {
-      reject(new Error('Koneksi ke GitHub terputus saat mengunggah file.'));
-    };
+    lastResponseData = data;
 
-    xhr.send(file);
-  });
+    if (onProgress) {
+      const progressPercent = Math.min(95, Math.round(((i + 1) / totalParts) * 90));
+      onProgress(progressPercent);
+    }
+  }
+
+  if (onProgress) onProgress(100);
+
+  return {
+    downloadUrl: lastResponseData?.data?.download_url || '',
+    storagePath,
+    size: file.size,
+  };
 }

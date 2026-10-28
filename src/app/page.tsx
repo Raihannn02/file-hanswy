@@ -374,38 +374,17 @@ export default function FileHansWYApp() {
       // ================================================================
 
       if (isBrowserGitHubReady) {
-        // -- JALUR 1: Direct GitHub Release Asset Upload --
-        setProgress(10);
+        // -- JALUR 1: Chunked Upload ke GitHub (Mendukung File Besar & Tanpa Masalah CORS) --
+        setProgress(5);
         try {
-          const uploadResult = await uploadFileToGitHubBrowser(
+          await uploadFileToGitHubBrowser(
             item.file,
             currentFolderId,
             (pct) => setProgress(pct)
           );
 
-          setProgress(85);
-
-          // Simpan metadata ke API (hanya JSON kecil)
-          const metaRes = await fetch('/api/files/metadata', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name: item.file.name,
-              folderId: currentFolderId,
-              size: item.file.size,
-              mimeType: item.file.type || 'application/octet-stream',
-              storagePath: uploadResult.storagePath,
-              downloadUrl: uploadResult.downloadUrl,
-              githubAssetId: uploadResult.assetId,
-            }),
-          });
-
-          const metaData = await safeParseJson(metaRes);
-          if (metaData.success) {
-            setSuccess();
-          } else {
-            setError((metaData.error as string) || 'Gagal menyimpan metadata file');
-          }
+          setProgress(100);
+          setSuccess();
         } catch (uploadErr) {
           setError((uploadErr as Error).message || 'Gagal mengunggah file ke GitHub');
         }

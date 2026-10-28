@@ -441,7 +441,15 @@ export async function ghDeleteFolder(folderId: string): Promise<void> {
   const filesToDelete = db.files.filter((f) => foldersToRemove.has(f.folder_id));
   for (const file of filesToDelete) {
     try {
-      if (file.github_asset_id) {
+      if (file.download_url && file.download_url.startsWith('chunked:')) {
+        const parts = file.download_url.split(':');
+        const count = parseInt(parts[1], 10);
+        const basePath = parts.slice(2).join(':');
+        for (let i = 0; i < count; i++) {
+          const aId = await findGitHubAssetByName(`${basePath}_part${i}`);
+          if (aId) await deleteGitHubAsset(aId);
+        }
+      } else if (file.github_asset_id) {
         await deleteGitHubAsset(file.github_asset_id);
       } else if (file.storage_path) {
         const assetId = await findGitHubAssetByName(file.storage_path);
@@ -520,7 +528,15 @@ export async function ghDeleteFile(fileId: string): Promise<void> {
   if (file) {
     // Hapus asset dari GitHub Release
     try {
-      if (file.github_asset_id) {
+      if (file.download_url && file.download_url.startsWith('chunked:')) {
+        const parts = file.download_url.split(':');
+        const count = parseInt(parts[1], 10);
+        const basePath = parts.slice(2).join(':');
+        for (let i = 0; i < count; i++) {
+          const aId = await findGitHubAssetByName(`${basePath}_part${i}`);
+          if (aId) await deleteGitHubAsset(aId);
+        }
+      } else if (file.github_asset_id) {
         await deleteGitHubAsset(file.github_asset_id);
       } else if (file.storage_path) {
         const assetId = await findGitHubAssetByName(file.storage_path);
