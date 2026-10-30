@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { uploadFileRecord, renameFile, deleteFile } from '@/lib/storage-engine';
+import { uploadFileRecord, renameFile, deleteFile, toggleHideFile } from '@/lib/storage-engine';
 import { isAdminAuthenticated } from '@/lib/auth';
 
 // Increase max duration for large file uploads on Vercel
@@ -83,14 +83,25 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    let body: { fileId?: string; name?: string };
+    let body: { fileId?: string; id?: string; name?: string; is_hidden?: boolean };
     try {
       body = await req.json();
     } catch {
       return safeJson({ success: false, error: 'Request body harus berformat JSON yang valid.' }, 400);
     }
 
-    const { fileId, name } = body;
+    const fileId = body.fileId || body.id;
+
+    // Support toggle is_hidden
+    if (typeof body.is_hidden === 'boolean') {
+      if (!fileId) {
+        return safeJson({ success: false, error: 'Parameter fileId wajib diisi.' }, 400);
+      }
+      const updated = await toggleHideFile(fileId, body.is_hidden);
+      return safeJson({ success: true, data: updated });
+    }
+
+    const name = body.name;
 
     if (!fileId || !name || !name.trim()) {
       return safeJson(
@@ -116,7 +127,16 @@ export async function DELETE(req: NextRequest) {
     }
 
     const { searchParams } = new URL(req.url);
-    const fileId = searchParams.get('fileId');
+    let fileId = searchParams.get('fileId') || searchParams.get('id');
+
+    if (!fileId) {
+      try {
+        const body = await req.json();
+        fileId = body.fileId || body.id;
+      } catch {
+        // query param was empty and no json body
+      }
+    }
 
     if (!fileId) {
       return safeJson(

@@ -4,6 +4,7 @@ import {
   createFolder,
   renameFolder,
   deleteFolder,
+  toggleHideFolder,
 } from '@/lib/storage-engine';
 import { isAdminAuthenticated } from '@/lib/auth';
 
@@ -11,7 +12,8 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const folderId = searchParams.get('folderId');
-    const contents = await getFolderContents(folderId);
+    const isAdmin = isAdminAuthenticated(req);
+    const contents = await getFolderContents(folderId, isAdmin);
     return NextResponse.json({ success: true, data: contents });
   } catch (err) {
     return NextResponse.json(
@@ -60,7 +62,21 @@ export async function PATCH(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { folderId, name } = body;
+    const folderId = (body.folderId || body.id) as string;
+
+    // Support toggle is_hidden
+    if (typeof body.is_hidden === 'boolean') {
+      if (!folderId) {
+        return NextResponse.json(
+          { success: false, error: 'Parameter folderId wajib diisi.' },
+          { status: 400 }
+        );
+      }
+      const updated = await toggleHideFolder(folderId, body.is_hidden);
+      return NextResponse.json({ success: true, data: updated });
+    }
+
+    const name = body.name as string;
 
     if (!folderId || !name || !name.trim()) {
       return NextResponse.json(
@@ -89,7 +105,16 @@ export async function DELETE(req: NextRequest) {
     }
 
     const { searchParams } = new URL(req.url);
-    const folderId = searchParams.get('folderId');
+    let folderId = searchParams.get('folderId') || searchParams.get('id');
+
+    if (!folderId) {
+      try {
+        const body = await req.json();
+        folderId = (body.folderId || body.id) as string;
+      } catch {
+        // query param was empty and no json body
+      }
+    }
 
     if (!folderId) {
       return NextResponse.json(

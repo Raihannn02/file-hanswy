@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GET as handleGetById } from './[id]/route';
+import { GET as handleGetByPath } from './[...path]/route';
 
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
@@ -10,5 +10,6 @@ export async function GET(req: NextRequest) {
   if (!id) {
     return new NextResponse('Parameter id atau download wajib disertakan', { status: 400 });
   }
-  return handleGetById(req, { params: Promise.resolve({ id }) });
+  // Wrap id in an array as required by the catch-all segment [...path]
+  return handleGetByPath(req, { params: Promise.resolve({ path: [id] }) });
 }

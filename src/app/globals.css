@@ -116,6 +116,57 @@ body {
 }
 
 /* Custom Scrollbar */
+
+/* Animation for rename highlight */
+.item-anim-rename {
+  animation: rename-flash 0.8s ease;
+}
+@keyframes rename-flash {
+  0% { background-color: var(--accent-green); }
+  100% { background-color: transparent; }
+}
+
+/* Animation for delete fade out */
+.item-anim-delete {
+  animation: delete-fade 0.5s forwards;
+}
+@keyframes delete-fade {
+  to { opacity: 0; transform: scale(0.95); }
+}
+
+/* Hidden item style for Admin view */
+.item-hidden-admin {
+  opacity: 0.65;
+  border: 1px dashed rgba(245, 158, 11, 0.45) !important;
+  background: rgba(245, 158, 11, 0.04) !important;
+}
+
+.item-hidden-admin:hover {
+  opacity: 0.95;
+}
+
+.badge-hidden-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  background-color: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 9999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #f59e0b;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.btn-icon-admin.active-hide {
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.4);
+  background-color: rgba(245, 158, 11, 0.1);
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -459,6 +510,60 @@ input, textarea, select {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+/* Sound Toggle Button on Hero Banner */
+.banner-sound-toggle-btn {
+  position: absolute;
+  bottom: 14px;
+  right: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  background: rgba(5, 7, 10, 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(0, 210, 255, 0.35);
+  border-radius: var(--radius-full);
+  color: var(--text-primary);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 10;
+}
+
+.banner-sound-toggle-btn:hover {
+  background: rgba(9, 33, 51, 0.9);
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+  box-shadow: 0 0 16px var(--accent-glow);
+  transform: translateY(-1px);
+}
+
+.banner-sound-active-icon {
+  color: var(--accent-cyan);
+  animation: pulse-sound 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse-sound {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.15); opacity: 0.8; }
+}
+
+[data-theme="white"] .banner-sound-toggle-btn {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(2, 132, 199, 0.4);
+  color: #0f172a;
+}
+
+[data-theme="white"] .banner-sound-toggle-btn:hover {
+  background: #ffffff;
+  border-color: #0284c7;
+  color: #0284c7;
 }
 
 /* ============================================================
@@ -879,6 +984,109 @@ input, textarea, select {
 .btn-icon-admin.delete:hover {
   color: #ff5252;
   background-color: rgba(255, 82, 82, 0.12);
+}
+
+/* ============================================================
+   MULTI-SELECT / BULK ACTIONS
+   ============================================================ */
+.icon-control-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.icon-control-btn.select-mode-active {
+  color: var(--accent-cyan);
+  border-color: var(--accent-border);
+  background-color: var(--accent-subtle);
+}
+
+.bulk-action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-cyan);
+  background-color: var(--accent-subtle);
+}
+
+.bulk-action-left,
+.bulk-action-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bulk-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s;
+}
+
+.bulk-select-all:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-card-hover);
+}
+
+.bulk-count {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  font-family: var(--font-mono);
+}
+
+.bulk-action-right .btn-admin-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-admin-action.bulk-delete {
+  background-color: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  color: #ef4444;
+}
+
+.btn-admin-action.bulk-delete:hover:not(:disabled) {
+  background-color: #ef4444;
+  color: #ffffff;
+}
+
+.item-row-selected {
+  border-color: var(--accent-border);
+  background-color: var(--accent-subtle);
+}
+
+.item-select-box {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  margin-right: 12px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.item-select-box:hover {
+  color: var(--text-primary);
+}
+
+.item-select-box.checked {
+  color: var(--accent-cyan);
 }
 
 /* ============================================================

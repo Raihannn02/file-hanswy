@@ -323,11 +323,83 @@ export async function findGitHubAssetByName(assetName: string): Promise<number |
   return null;
 }
 
+/**
+ * Ambil seluruh asset dari sebuah release (mendukung pagination).
+ */
+async function listReleaseAssets(release: GitHubRelease): Promise<GitHubAsset[]> {
+  const assets: GitHubAsset[] = [...release.assets];
+  if (assets.length >= 100) {
+    let page = 1;
+    while (true) {
+      const res = await ghFetch(
+        `${API_BASE}/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/${release.id}/assets?per_page=100&page=${page}`
+      );
+      if (!res.ok) break;
+
+      const arr: GitHubAsset[] = await res.json();
+      if (arr.length === 0) break;
+
+      for (const a of arr) {
+        if (!assets.some((x) => x.id === a.id)) assets.push(a);
+      }
+
+      if (arr.length < 100) break;
+      page++;
+    }
+  }
+  return assets;
+}
+
+/**
+ * Gabungkan asset chunk (part) menjadi SATU asset tunggal di GitHub Release.
+ *
+ * Tujuan: agar file besar pun bisa diunduh sebagai satu tautan langsung GitHub
+ * (0 byte bandwidth Vercel). Part asli TIDAK dihapus agar rollback tetap mungkin.
+ * Return null jika asset gabungan sudah ada / tidak dapat dihitung.
+ */
+export async function consolidateGitHubChunks(
+  storagePath: string,
+  totalParts: number,
+  mimeType: string
+): Promise<{ assetId: number; downloadUrl: string; size: number } | null> {
+  const release = await getOrCreateRelease(FILES_TAG, 'Storage Files');
+
+  // 1. Jika asset gabungan sudah ada, pakai ulang (idempotent)
+  const existing = release.assets.find((a) => a.name === storagePath);
+  if (existing) {
+    return { assetId: existing.id, downloadUrl: existing.browser_download_url, size: existing.size };
+  }
+
+  // 2. Unduh seluruh part dari GitHub lalu satukan
+  const byName = new Map((await listReleaseAssets(release)).map((a) => [a.name, a]));
+  const buffers: Buffer[] = [];
+  for (let i = 0; i < totalParts; i++) {
+    const part = byName.get(`${storagePath}_part${i}`);
+    if (!part) {
+      throw new Error(`Part ${i} untuk "${storagePath}" tidak ditemukan di GitHub`);
+    }
+    const res = await ghFetch(
+      `${API_BASE}/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/assets/${part.id}`,
+      { headers: { Accept: 'application/octet-stream' } }
+    );
+    if (!res.ok) {
+      throw new Error(`Gagal mengunduh part ${i}: HTTP ${res.status}`);
+    }
+    buffers.push(Buffer.from(await res.arrayBuffer()));
+  }
+
+  // 3. Upload sebagai satu asset tunggal
+  const merged = Buffer.concat(buffers);
+  const { assetId, downloadUrl } = await uploadFileToGitHub(merged, storagePath, mimeType);
+  return { assetId, downloadUrl, size: merged.length };
+}
+
 // --------------- High-level Storage API ---------------
 // (Digunakan oleh storage-engine.ts)
 
 export async function ghGetFolderContents(
-  targetFolderId: string | null = null
+  targetFolderId: string | null = null,
+  isAdmin: boolean = false
 ): Promise<FolderContentsResponse> {
   const db = await readGitHubMetadata();
   const actualFolderId = !targetFolderId || targetFolderId === 'root' ? null : targetFolderId;
@@ -336,6 +408,19 @@ export async function ghGetFolderContents(
   const currentFolder = actualFolderId
     ? db.folders.find((f) => f.id === actualFolderId) || null
     : null;
+
+  // If current folder is hidden and requester is not admin, deny/empty view
+  if (currentFolder?.is_hidden && !isAdmin) {
+    return {
+      currentFolder: null,
+      breadcrumbs: [{ id: null, name: 'Root' }],
+      folders: [],
+      files: [],
+      totalItems: 0,
+      isCloudStorage: true,
+      schemaMissing: false,
+    };
+  }
 
   // 2. Build breadcrumbs
   const breadcrumbs: BreadcrumbItem[] = [{ id: null, name: 'Root' }];
@@ -354,19 +439,29 @@ export async function ghGetFolderContents(
     breadcrumbs.push(...trail);
   }
 
-  // 3. Fetch subfolders
+  // 3. Fetch subfolders (filter out hidden folders for guests)
   const folders = db.folders
-    .filter((f) => (actualFolderId ? f.parent_id === actualFolderId : f.parent_id === null))
+    .filter((f) => {
+      const matchParent = actualFolderId ? f.parent_id === actualFolderId : f.parent_id === null;
+      if (!matchParent) return false;
+      if (!isAdmin && f.is_hidden) return false;
+      return true;
+    })
     .map((f) => {
-      const subFolderCount = db.folders.filter((sub) => sub.parent_id === f.id).length;
-      const fileCount = db.files.filter((file) => file.folder_id === f.id).length;
-      return { ...f, item_count: subFolderCount + fileCount };
+      const subFolders = db.folders.filter((sub) => sub.parent_id === f.id && (isAdmin || !sub.is_hidden));
+      const subFiles = db.files.filter((file) => file.folder_id === f.id && (isAdmin || !file.is_hidden));
+      return { ...f, item_count: subFolders.length + subFiles.length };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  // 4. Fetch files
+  // 4. Fetch files (filter out hidden files for guests)
   const files = db.files
-    .filter((file) => (actualFolderId ? file.folder_id === actualFolderId : !file.folder_id))
+    .filter((file) => {
+      const matchFolder = actualFolderId ? file.folder_id === actualFolderId : !file.folder_id;
+      if (!matchFolder) return false;
+      if (!isAdmin && file.is_hidden) return false;
+      return true;
+    })
     .sort((a, b) => a.name.localeCompare(b.name));
 
   return {
@@ -550,6 +645,34 @@ export async function ghDeleteFile(fileId: string): Promise<void> {
     db.files = db.files.filter((f) => f.id !== fileId);
     await writeGitHubMetadata(db);
   }
+}
+
+export async function ghToggleHideFolder(
+  folderId: string,
+  isHidden: boolean
+): Promise<FolderItem> {
+  const db = await readGitHubMetadata();
+  const folder = db.folders.find((f) => f.id === folderId);
+  if (!folder) throw new Error('Folder tidak ditemukan');
+
+  folder.is_hidden = isHidden;
+  folder.updated_at = new Date().toISOString();
+  await writeGitHubMetadata(db);
+  return folder;
+}
+
+export async function ghToggleHideFile(
+  fileId: string,
+  isHidden: boolean
+): Promise<FileItem> {
+  const db = await readGitHubMetadata();
+  const file = db.files.find((f) => f.id === fileId);
+  if (!file) throw new Error('File tidak ditemukan');
+
+  file.is_hidden = isHidden;
+  file.updated_at = new Date().toISOString();
+  await writeGitHubMetadata(db);
+  return file;
 }
 
 export async function ghGetFile(fileId: string): Promise<FileItem | null> {

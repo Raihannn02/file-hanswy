@@ -32,6 +32,12 @@ import {
   Heart,
   MessageSquare,
   Copy,
+  Eye,
+  EyeOff,
+  Volume2,
+  VolumeX,
+  Square,
+  SquareCheck,
 } from 'lucide-react';
 import { FolderItem, FileItem, BreadcrumbItem } from '@/lib/types';
 import { isBrowserGitHubReady, uploadFileToGitHubBrowser } from '@/lib/github-browser';
@@ -57,6 +63,14 @@ interface UploadQueueItem {
   progress: number;
   errorMessage?: string;
 }
+
+// GitHub Release storage coordinates — used to resolve direct download links
+// so that every download/copy-link points at GitHub (0 bytes of Vercel bandwidth).
+const GITHUB_OWNER = process.env.NEXT_PUBLIC_GITHUB_OWNER || 'Raihannn02';
+const GITHUB_REPO = process.env.NEXT_PUBLIC_GITHUB_REPO || 'file-hanswy';
+const GITHUB_FILES_TAG = 'storage-files';
+const githubAssetUrl = (storagePath: string) =>
+  `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/${GITHUB_FILES_TAG}/${storagePath}`;
 
 // Helper to safely parse JSON from fetch response
 async function safeParseJson(res: Response): Promise<{ success: boolean; [key: string]: unknown }> {
@@ -108,6 +122,24 @@ export default function HansWYFileArchiveApp() {
   const [newFolderName, setNewFolderName] = useState<string>('');
   const [creatingFolder, setCreatingFolder] = useState<boolean>(false);
 
+  // Hero banner sound control
+  const bannerVideoRef = useRef<HTMLVideoElement>(null);
+  const [isBannerMuted, setIsBannerMuted] = useState<boolean>(true);
+
+  const toggleBannerSound = () => {
+    if (bannerVideoRef.current) {
+      const nextMuted = !isBannerMuted;
+      bannerVideoRef.current.muted = nextMuted;
+      setIsBannerMuted(nextMuted);
+      if (!nextMuted) {
+        bannerVideoRef.current.play().catch(() => {});
+        showToast('Banner audio unmuted 🔊', 'info');
+      } else {
+        showToast('Banner audio muted 🔇', 'info');
+      }
+    }
+  };
+
   // Upload Modal (Bulk)
   const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
   const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
@@ -116,12 +148,20 @@ export default function HansWYFileArchiveApp() {
   const bulkFileInputRef = useRef<HTMLInputElement>(null);
 
   const [renameTarget, setRenameTarget] = useState<{ type: 'folder' | 'file'; id: string; name: string } | null>(null);
+  const [animatedRenameId, setAnimatedRenameId] = useState<string | null>(null);
+  const [animatedDeleteId, setAnimatedDeleteId] = useState<string | null>(null);
   const [renameInput, setRenameInput] = useState<string>('');
 
   const [deleteTarget, setDeleteTarget] = useState<{ type: 'folder' | 'file'; id: string; name: string } | null>(null);
   const [deleting, setDeleting] = useState<boolean>(false);
 
   const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
+
+  // Multi-select (bulk actions) state
+  const [selectionMode, setSelectionMode] = useState<boolean>(false);
+  const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
+  const [bulkProcessing, setBulkProcessing] = useState<boolean>(false);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState<boolean>(false);
 
   // Toasts
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -258,6 +298,7 @@ export default function HansWYFileArchiveApp() {
   const navigateToFolder = (id: string | null) => {
     setCurrentFolderId(id);
     setSearchQuery('');
+    setSelectedFileIds([]);
   };
 
   const navigateToParent = () => {
@@ -268,6 +309,7 @@ export default function HansWYFileArchiveApp() {
       setCurrentFolderId(null);
     }
     setSearchQuery('');
+    setSelectedFileIds([]);
   };
 
   // Handle Login
@@ -355,9 +397,12 @@ export default function HansWYFileArchiveApp() {
       });
       const data = await safeParseJson(res);
       if (data.success) {
+        const renamedId = renameTarget.id;
         setRenameTarget(null);
         setRenameInput('');
-        fetchContents(currentFolderId, true);
+        setAnimatedRenameId(renamedId);
+        await fetchContents(currentFolderId, true);
+        setTimeout(() => setAnimatedRenameId(null), 900);
         showToast('Item renamed successfully ✓', 'success');
       } else {
         showToast((data.error as string) || 'Failed to rename item', 'error');
@@ -378,9 +423,14 @@ export default function HansWYFileArchiveApp() {
       });
       const data = await safeParseJson(res);
       if (data.success) {
-        setDeleteTarget(null);
-        fetchContents(currentFolderId, true);
-        showToast(`${deleteTarget.type === 'folder' ? 'Folder' : 'File'} deleted successfully ✓`, 'success');
+        setAnimatedDeleteId(deleteTarget.id);
+        const deletedType = deleteTarget.type;
+        setTimeout(async () => {
+          setDeleteTarget(null);
+          setAnimatedDeleteId(null);
+          await fetchContents(currentFolderId, true);
+          showToast(`${deletedType === 'folder' ? 'Folder' : 'File'} deleted successfully ✓`, 'success');
+        }, 500);
       } else {
         showToast((data.error as string) || 'Failed to delete item', 'error');
       }
@@ -391,24 +441,47 @@ export default function HansWYFileArchiveApp() {
     }
   };
 
-  // Download File Action
+  // Toggle Hide / Show Action (Admin only)
+  const handleToggleHide = async (type: 'folder' | 'file', id: string, currentHidden: boolean) => {
+    try {
+      const endpoint = type === 'folder' ? '/api/folders' : '/api/files';
+      const targetState = !currentHidden;
+      const res = await fetch(endpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, is_hidden: targetState }),
+      });
+      const data = await safeParseJson(res);
+      if (data.success) {
+        await fetchContents(currentFolderId, true);
+        showToast(
+          `${type === 'folder' ? 'Folder' : 'File'} is now ${targetState ? 'HIDDEN 🔒 (Guest users cannot see/access)' : 'VISIBLE 👁️ (Accessible to everyone)'}`,
+          'info'
+        );
+      } else {
+        showToast((data.error as string) || 'Failed to update visibility', 'error');
+      }
+    } catch (err) {
+      showToast((err as Error).message || 'Network error encountered', 'error');
+    }
+  };
+
+  // Download File Action — always triggers a direct GitHub download (0 byte Vercel bandwidth)
   const handleDownloadFile = async (file: FileItem) => {
     setDownloadingFileId(file.id);
     try {
-      const dlUrl = file.is_chunked
-        ? `/api/download/${file.id}`
-        : file.download_url.startsWith('http')
-        ? file.download_url
-        : `${window.location.origin}${file.download_url}`;
+      const targetUrl = buildDirectLink(file);
 
       const a = document.createElement('a');
-      a.href = dlUrl;
+      a.href = targetUrl;
       a.download = file.name;
+      a.rel = 'noopener';
+      a.style.display = 'none';
       document.body.appendChild(a);
       a.click();
-      a.remove();
+      setTimeout(() => a.remove(), 200);
 
-      showToast(`Downloading "${file.name}" (${formatFileSize(file.size)})... 🚀`, 'info');
+      showToast(`Downloading "${file.name}"... 🚀`, 'info');
     } catch (err) {
       showToast((err as Error).message || 'Failed to trigger file download', 'error');
     } finally {
@@ -416,11 +489,33 @@ export default function HansWYFileArchiveApp() {
     }
   };
 
-  // Copy Direct Link
-  const copyDirectLink = (file: FileItem) => {
+  // Resolve the GitHub Release asset URL for a file.
+  // - Public single asset  -> the stored GitHub URL itself.
+  // - Chunked/merged asset -> rebuilt from its storage path on GitHub.
+  // Returns null only when the file lives outside GitHub storage.
+  const resolveGitHubLink = (file: FileItem): string | null => {
+    if (file.download_url && file.download_url.startsWith('http')) {
+      return file.download_url;
+    }
+    if (file.download_url?.startsWith('chunked:') && file.storage_path) {
+      return githubAssetUrl(file.storage_path);
+    }
+    return null;
+  };
+
+  // Build the most efficient download URL for a file.
+  // Every file resolves to GitHub (0 byte Vercel bandwidth); the API route is only
+  // used as a last-resort fallback for non-GitHub (local) storage.
+  const buildDirectLink = (file: FileItem): string => {
+    const ghLink = resolveGitHubLink(file);
+    if (ghLink) return ghLink;
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    const shareableUrl = `${origin}?download=${encodeURIComponent(file.id)}`;
-    navigator.clipboard.writeText(shareableUrl);
+    return `${origin}/api/download/${file.id}/${encodeURIComponent(file.name)}`;
+  };
+
+  // Copy Direct Link — always provides a direct GitHub CDN link (0 byte Vercel bandwidth)
+  const copyDirectLink = (file: FileItem) => {
+    navigator.clipboard.writeText(buildDirectLink(file));
     showToast('Direct download link copied to clipboard! 📋', 'success');
   };
 
@@ -588,18 +683,19 @@ export default function HansWYFileArchiveApp() {
             download_url: target.download_url,
           });
 
-          const dlUrl = target.is_chunked
-            ? `/api/download/${target.id}`
-            : target.download_url.startsWith('http')
+          // Direct GitHub Release CDN download prevents consuming Vercel bandwidth quota
+          const dlUrl = target.download_url && target.download_url.startsWith('http')
             ? target.download_url
-            : `${window.location.origin}${target.download_url}`;
+            : `/api/download/${encodeURIComponent(target.id)}`;
 
           const a = document.createElement('a');
           a.href = dlUrl;
           a.download = target.name;
+          a.rel = 'noopener';
+          a.style.display = 'none';
           document.body.appendChild(a);
           a.click();
-          a.remove();
+          setTimeout(() => a.remove(), 200);
 
           showToast(`Downloading "${target.name}" (${formatFileSize(target.size)})... 🚀`, 'info');
         } else {
@@ -671,6 +767,106 @@ export default function HansWYFileArchiveApp() {
   const totalVisibleItems = filteredFolders.length + filteredFiles.length;
   const queuedCount = uploadQueue.filter((i) => i.status === 'queued').length;
   const successCount = uploadQueue.filter((i) => i.status === 'success').length;
+
+  // ---- MULTI-SELECT (BULK ACTIONS) ----
+  const selectedFiles = useMemo(
+    () => files.filter((f) => selectedFileIds.includes(f.id)),
+    [files, selectedFileIds]
+  );
+
+  const allVisibleSelected =
+    filteredFiles.length > 0 && filteredFiles.every((f) => selectedFileIds.includes(f.id));
+
+  const toggleSelectionMode = () => {
+    setSelectionMode((prev) => {
+      if (prev) setSelectedFileIds([]);
+      return !prev;
+    });
+  };
+
+  const toggleFileSelection = (id: string) => {
+    setSelectedFileIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllVisible = () => {
+    const visibleIds = filteredFiles.map((f) => f.id);
+    setSelectedFileIds((prev) =>
+      allVisibleSelected
+        ? prev.filter((id) => !visibleIds.includes(id))
+        : Array.from(new Set([...prev, ...visibleIds]))
+    );
+  };
+
+  const handleBulkCopyLinks = async () => {
+    if (selectedFiles.length === 0) return;
+    const links = selectedFiles.map((f) => buildDirectLink(f)).join('\n');
+    try {
+      await navigator.clipboard.writeText(links);
+      showToast(
+        `Copied ${selectedFiles.length} download link${selectedFiles.length > 1 ? 's' : ''} to clipboard! 📋`,
+        'success'
+      );
+    } catch {
+      showToast('Failed to copy links to clipboard', 'error');
+    }
+  };
+
+  const handleBulkDownload = async () => {
+    if (selectedFiles.length === 0 || bulkProcessing) return;
+    setBulkProcessing(true);
+    showToast(
+      `Starting download of ${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''}... 🚀`,
+      'info'
+    );
+    for (const file of selectedFiles) {
+      const a = document.createElement('a');
+      a.href = buildDirectLink(file);
+      a.download = file.name;
+      a.rel = 'noopener';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => a.remove(), 300);
+      // Small spacing so the browser does not block rapid successive downloads
+      await new Promise((r) => setTimeout(r, 700));
+    }
+    setBulkProcessing(false);
+    showToast(
+      `Triggered download for ${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''} ✓`,
+      'success'
+    );
+  };
+
+  // Bulk delete (Admin only) — deletes sequentially to keep db.json writes consistent
+  const handleBulkDelete = async () => {
+    const ids = selectedFiles.map((f) => f.id);
+    if (ids.length === 0 || bulkProcessing) return;
+    setBulkProcessing(true);
+    let deletedCount = 0;
+    const failedIds: string[] = [];
+    for (const id of ids) {
+      try {
+        const res = await fetch(`/api/files?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+        const data = await safeParseJson(res);
+        if (data.success) deletedCount++;
+        else failedIds.push(id);
+      } catch {
+        failedIds.push(id);
+      }
+    }
+    setBulkProcessing(false);
+    setShowBulkDeleteModal(false);
+    setSelectedFileIds(failedIds);
+    await fetchContents(currentFolderId, true);
+    if (failedIds.length === 0) {
+      setSelectionMode(false);
+      showToast(`Deleted ${deletedCount} file${deletedCount > 1 ? 's' : ''} successfully ✓`, 'success');
+    } else {
+      showToast(`${deletedCount} deleted, ${failedIds.length} failed to delete`, 'error');
+    }
+  };
 
   return (
     <div className="app-container">
@@ -925,17 +1121,39 @@ export default function HansWYFileArchiveApp() {
         )}
 
         {/* ============================================================
-            HERO BANNER - ANIMATION VIDEO (AUTOPLAY WITHOUT PLAY BUTTON)
+            HERO BANNER - ANIMATION VIDEO (AUTOPLAY WITH MUTE/UNMUTE)
             ============================================================ */}
         <section className="hero-banner-wrap">
           <video
+            ref={bannerVideoRef}
             src="/hanswy-banner.mp4"
             autoPlay
             loop
-            muted
+            muted={isBannerMuted}
             playsInline
             className="hero-banner-video"
           />
+
+          {/* Sound Toggle Button */}
+          <button
+            type="button"
+            className="banner-sound-toggle-btn"
+            onClick={toggleBannerSound}
+            title={isBannerMuted ? 'Unmute banner sound' : 'Mute banner sound'}
+            aria-label={isBannerMuted ? 'Unmute banner sound' : 'Mute banner sound'}
+          >
+            {isBannerMuted ? (
+              <>
+                <VolumeX size={15} />
+                <span>Muted</span>
+              </>
+            ) : (
+              <>
+                <Volume2 size={15} className="banner-sound-active-icon" />
+                <span>Playing</span>
+              </>
+            )}
+          </button>
         </section>
 
         {/* ============================================================
@@ -949,9 +1167,9 @@ export default function HansWYFileArchiveApp() {
             <div className="changelog-info">
               <div className="changelog-meta">
                 <span className="changelog-tag">CHANGELOG</span>
-                <span className="changelog-date">29 Oct 2026 • 01:30 WIB</span>
+                <span className="changelog-date">30 Oct 2026 • 20:45 WIB</span>
               </div>
-              <span className="changelog-title">VERSION 2.5 - ADMIN LOGOUT FIX & REFINEMENTS</span>
+              <span className="changelog-title">VERSION 3.5 - SMART MULTI-SELECT & BULK ACTIONS</span>
             </div>
           </div>
 
@@ -1014,6 +1232,16 @@ export default function HansWYFileArchiveApp() {
               <RotateCw size={15} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} />
             </button>
 
+            {/* Multi-select toggle (Guest & Admin) */}
+            <button
+              className={`icon-control-btn ${selectionMode ? 'select-mode-active' : ''}`}
+              onClick={toggleSelectionMode}
+              disabled={filteredFiles.length === 0}
+              title={selectionMode ? 'Exit select mode' : 'Select multiple files'}
+            >
+              {selectionMode ? <SquareCheck size={15} /> : <Square size={15} />}
+            </button>
+
             {/* Admin action buttons */}
             {user.role === 'admin' && (
               <>
@@ -1037,6 +1265,52 @@ export default function HansWYFileArchiveApp() {
             )}
           </div>
         </div>
+
+        {/* Bulk action bar (multi-select) */}
+        {selectionMode && (
+          <div className="bulk-action-bar">
+            <div className="bulk-action-left">
+              <button type="button" className="bulk-select-all" onClick={toggleSelectAllVisible}>
+                {allVisibleSelected ? <SquareCheck size={15} /> : <Square size={15} />}
+                <span>{allVisibleSelected ? 'Deselect all' : 'Select all'}</span>
+              </button>
+              <span className="bulk-count">
+                {selectedFileIds.length} file{selectedFileIds.length === 1 ? '' : 's'} selected
+              </span>
+            </div>
+            <div className="bulk-action-right">
+              <button
+                className="btn-admin-action secondary"
+                disabled={selectedFileIds.length === 0 || bulkProcessing}
+                onClick={handleBulkCopyLinks}
+                title="Copy download links of selected files"
+              >
+                <LinkIcon size={14} />
+                <span>Copy Links</span>
+              </button>
+              <button
+                className="btn-admin-action secondary"
+                disabled={selectedFileIds.length === 0 || bulkProcessing}
+                onClick={handleBulkDownload}
+                title="Download selected files"
+              >
+                <Download size={14} />
+                <span>Download</span>
+              </button>
+              {user.role === 'admin' && (
+                <button
+                  className="btn-admin-action bulk-delete"
+                  disabled={selectedFileIds.length === 0 || bulkProcessing}
+                  onClick={() => setShowBulkDeleteModal(true)}
+                  title="Delete selected files"
+                >
+                  <Trash2 size={14} />
+                  <span>Delete</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Parent Directory Navigation */}
         {currentFolderId !== null && (
@@ -1104,8 +1378,9 @@ export default function HansWYFileArchiveApp() {
             {/* FOLDERS */}
             {filteredFolders.map((folder) => {
               const { dateStr, timeStr } = formatDateParts(folder.created_at);
+              const isHidden = Boolean(folder.is_hidden);
               return (
-                <div key={folder.id} className="item-row-card">
+                <div key={folder.id} className={`item-row-card ${animatedRenameId===folder.id?'item-anim-rename':''} ${animatedDeleteId===folder.id?'item-anim-delete':''} ${isHidden ? 'item-hidden-admin' : ''}`}>
                   <div
                     className="item-row-left"
                     onClick={() => navigateToFolder(folder.id)}
@@ -1113,7 +1388,14 @@ export default function HansWYFileArchiveApp() {
                     <div className="item-folder-badge">
                       <Folder size={20} fill="currentColor" strokeWidth={0} />
                     </div>
-                    <span className="item-row-title">{folder.name}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span className="item-row-title">{folder.name}</span>
+                      {isHidden && user.role === 'admin' && (
+                        <span className="badge-hidden-tag">
+                          <EyeOff size={11} /> Hidden
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="item-row-right">
@@ -1124,6 +1406,13 @@ export default function HansWYFileArchiveApp() {
 
                     {user.role === 'admin' && (
                       <div style={{ display: 'flex', gap: '6px' }}>
+                        <button
+                          className={`btn-icon-admin ${isHidden ? 'active-hide' : ''}`}
+                          title={isHidden ? 'Hidden for Guests (Click to make Visible)' : 'Visible to Guests (Click to Hide)'}
+                          onClick={() => handleToggleHide('folder', folder.id, isHidden)}
+                        >
+                          {isHidden ? <EyeOff size={13} color="#f59e0b" /> : <Eye size={13} />}
+                        </button>
                         <button
                           className="btn-icon-admin"
                           title="Rename folder"
@@ -1160,16 +1449,34 @@ export default function HansWYFileArchiveApp() {
             {filteredFiles.map((file) => {
               const isApk = file.name.toLowerCase().endsWith('.apk');
               const { dateStr, timeStr } = formatDateParts(file.created_at);
+              const isHidden = Boolean(file.is_hidden);
               return (
-                <div key={file.id} className="item-row-card">
+                <div key={file.id} className={`item-row-card ${animatedRenameId===file.id?'item-anim-rename':''} ${animatedDeleteId===file.id?'item-anim-delete':''}` + (isHidden ? ' item-hidden-admin' : '') + (selectedFileIds.includes(file.id) ? ' item-row-selected' : '')}>
+                  {selectionMode && (
+                    <button
+                      type="button"
+                      className={`item-select-box ${selectedFileIds.includes(file.id) ? 'checked' : ''}`}
+                      onClick={() => toggleFileSelection(file.id)}
+                      title={selectedFileIds.includes(file.id) ? 'Deselect file' : 'Select file'}
+                    >
+                      {selectedFileIds.includes(file.id) ? <SquareCheck size={18} /> : <Square size={18} />}
+                    </button>
+                  )}
                   <div className="item-row-left">
                     <div className={`item-file-badge ${isApk ? 'apk' : ''}`}>
                       {renderFileIcon(file)}
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-                      <span className="item-row-title" title={file.name}>
-                        {file.name}
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span className="item-row-title" title={file.name}>
+                          {file.name}
+                        </span>
+                        {isHidden && user.role === 'admin' && (
+                          <span className="badge-hidden-tag">
+                            <EyeOff size={11} /> Hidden
+                          </span>
+                        )}
+                      </div>
                       <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
                         {formatFileSize(file.size)}
                       </span>
@@ -1184,6 +1491,13 @@ export default function HansWYFileArchiveApp() {
 
                     {user.role === 'admin' && (
                       <div style={{ display: 'flex', gap: '6px' }}>
+                        <button
+                          className={`btn-icon-admin ${isHidden ? 'active-hide' : ''}`}
+                          title={isHidden ? 'Hidden for Guests (Click to make Visible)' : 'Visible to Guests (Click to Hide)'}
+                          onClick={() => handleToggleHide('file', file.id, isHidden)}
+                        >
+                          {isHidden ? <EyeOff size={13} color="#f59e0b" /> : <Eye size={13} />}
+                        </button>
                         <button
                           className="btn-icon-admin"
                           title="Rename file"
@@ -1322,6 +1636,84 @@ export default function HansWYFileArchiveApp() {
 
             <div className="modal-text-body" style={{ maxHeight: '340px', overflowY: 'auto' }}>
               <div style={{ borderLeft: '2px solid var(--accent-cyan)', paddingLeft: '12px', marginBottom: '14px' }}>
+                <b style={{ color: 'var(--text-primary)' }}>30 Oct 2026 - 20:45 WIB (v3.5)</b>
+                <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
+                  • <b>Multi-Select Mode</b>: Added a select toggle available to both Guest and Admin. Pick multiple files, then run bulk actions in one go.
+                  <br />• <b>Bulk Copy &amp; Download</b>: Copy all selected download links at once, or trigger downloads for every selected file with a single click.
+                  <br />• <b>Zero-Bandwidth &amp; GitHub Delivery</b>: All downloads (single and bulk) now resolve to GitHub CDN via 302 redirects. This ensures 0 bytes of Vercel bandwidth are consumed, keeping the "Fast Origin Transfer" quota safe.
+                  <br />• <b>Auto-Merge Engine</b>: Large files uploaded in parts are now automatically merged into single assets on GitHub, allowing direct downloads for all future uploads.
+                </p>
+              </div>
+
+              <div style={{ borderLeft: '2px solid var(--accent-cyan)', paddingLeft: '12px', marginBottom: '14px' }}>
+                <b style={{ color: 'var(--text-primary)' }}>30 Oct 2026 - 04:15 WIB (v3.4)</b>
+                <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
+                  • <b>Full GitHub Direct-Delivery</b>: Re-consolidated every large APK that was previously split into parts (chunked) into a single asset on GitHub Releases. All files now serve through a 302 redirect straight to GitHub's CDN.
+                  <br />• <b>Zero Vercel Bandwidth</b>: Downloads no longer pass through the serverless function, so Fast Origin Transfer usage drops to 0 bytes for every file — keeping the Vercel quota permanently safe from overlimit.
+                  <br />• <b>Consistent Direct Links</b>: Both the Download button and "Copy Direct Link" now always point to GitHub, with no server-bandwidth throttling.
+                </p>
+              </div>
+
+              <div style={{ borderLeft: '2px solid var(--accent-cyan)', paddingLeft: '12px', marginBottom: '14px' }}>
+                <b style={{ color: 'var(--text-primary)' }}>29 Oct 2026 - 16:10 WIB (v3.3)</b>
+                <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
+                  • <b>Zero-Bandwidth Frontend Optimization</b>: Optimized `handleDownloadFile` and `copyDirectLink` to use direct GitHub CDN URLs for all public single files. This bypasses Vercel's edge network, ensuring 0 bytes of bandwidth quota are consumed for these downloads.
+                  <br />• <b>Improved Quota Safety</b>: The frontend now prioritizes external CDN endpoints over serverless proxies, protecting your Vercel account from "Fast Origin Transfer" overlimits.
+                  <br />• <b>Intelligent Path Selection</b>: The system automatically detects file status and chooses the most efficient download path (Direct CDN vs. API Streaming) without any user intervention.
+                </p>
+              </div>
+
+              <div style={{ borderLeft: '2px solid var(--accent-cyan)', paddingLeft: '12px', marginBottom: '14px' }}>
+                <b style={{ color: 'var(--text-primary)' }}>29 Oct 2026 - 15:45 WIB (v3.2)</b>
+                <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
+                  • <b>Streaming Merge Engine</b>: Implemented real-time reconstruction for large files split into parts on GitHub. This eliminates 404 errors for fragmented APKs.
+                  <br />• <b>Catch-all Download API</b>: Upgraded download routes to support native file extensions (e.g., `/api/download/ID/Roblox.apk`), ensuring 100% compatibility with Executor Installer and Redfinger.
+                  <br />• <b>Stable Direct Links</b>: "Copy Direct Link" now generates robust API-backed URLs that handle both standard and chunked files seamlessly.
+                </p>
+              </div>
+
+              <div style={{ borderLeft: '2px solid var(--border-card)', paddingLeft: '12px', marginBottom: '14px' }}>
+                <b style={{ color: 'var(--text-primary)' }}>29 Oct 2026 - 15:30 WIB (v3.1)</b>
+                <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
+                  • <b>Streaming Merge for Large Files</b>: Fixed download failures for files split into parts (chunked) on GitHub. Large APKs are now merged in real-time during download.
+                  <br />• <b>Enhanced Installer Compatibility</b>: Updated download API to support catch-all path segments, ensuring direct links end with `.apk` for native compatibility with Executor Installer and Redfinger.
+                  <br />• <b>Improved Link Persistence</b>: "Copy Direct Link" now provides a stable internal API endpoint that guarantees successful downloads regardless of file size or fragmentation.
+                </p>
+              </div>
+
+              <div style={{ borderLeft: '2px solid var(--border-card)', paddingLeft: '12px', marginBottom: '14px' }}>
+                <b style={{ color: 'var(--text-primary)' }}>29 Oct 2026 - 06:45 WIB (v3.0)</b>
+                <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
+                  • <b>New Cinematic Pixel Banner Animation</b>: Integrated updated high-definition animated pixel banner with immersive visual effects and custom soundtrack.
+                  <br />• <b>Interactive Audio Mute/Unmute Controls</b>: Added ambient sound controller button on the banner allowing users to seamlessly toggle audio on or off anytime.
+                </p>
+              </div>
+
+              <div style={{ borderLeft: '2px solid var(--border-card)', paddingLeft: '12px', marginBottom: '14px' }}>
+                <b style={{ color: 'var(--text-primary)' }}>29 Oct 2026 - 05:45 WIB (v2.9)</b>
+                <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
+                  • <b>Admin Hide/Show Controls</b>: Added visibility toggle (eye icon) for both folders and files. Admins can test and verify content while keeping it completely invisible and inaccessible to Guest users.
+                  <br />• <b>Secure Hidden State</b>: Hidden items are filtered out from Guest directory queries and blocked from direct downloads with HTTP 403 unless accessed with valid Admin authentication.
+                </p>
+              </div>
+
+              <div style={{ borderLeft: '2px solid var(--border-card)', paddingLeft: '12px', marginBottom: '14px' }}>
+                <b style={{ color: 'var(--text-primary)' }}>29 Oct 2026 - 03:15 WIB (v2.8)</b>
+                <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
+                  • <b>Remote / Bot Installer Compatibility</b>: Fixed Executor Installer & Redfinger remote APK installation failures by streaming binaries directly with direct `.apk` URL formats, `application/vnd.android.package-archive` MIME headers, and CORS enabled.
+                  <br />• <b>Copy Direct Link Enhancement</b>: Copied links now generate direct API download URLs ending with `.apk` parameter, allowing automated remote installers to identify and download APK packages without browser interference.
+                </p>
+              </div>
+
+              <div style={{ borderLeft: '2px solid var(--border-card)', paddingLeft: '12px', marginBottom: '14px' }}>
+                <b style={{ color: 'var(--text-primary)' }}>29 Oct 2026 - 03:00 WIB (v2.7)</b>
+                <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
+                  • <b>Direct Download Fix</b>: Fixed browser `about:blank#blocked` error by properly proxying and triggering downloads through server-side stream endpoints with proper Content-Disposition headers.
+                  <br />• <b>UI Animations</b>: Added visual confirmation animations (green highlight pulse) on folder/file rename and smooth fade-out effect on folder/file deletion.
+                </p>
+              </div>
+
+              <div style={{ borderLeft: '2px solid var(--border-card)', paddingLeft: '12px', marginBottom: '14px' }}>
                 <b style={{ color: 'var(--text-primary)' }}>29 Oct 2026 - 01:30 WIB (v2.5)</b>
                 <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
                   • <b>Admin Logout Fix</b>: Resolved click dismissal conflict on the admin menu and reinforced secure session cookie deletion.
@@ -1651,6 +2043,51 @@ export default function HansWYFileArchiveApp() {
                 onClick={handleDelete}
               >
                 {deleting ? 'Deleting...' : 'Yes, Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BULK DELETE CONFIRMATION MODAL (Admin only) */}
+      {showBulkDeleteModal && (
+        <div className="modal-overlay" onClick={() => !bulkProcessing && setShowBulkDeleteModal(false)}>
+          <div className="modal-dialog-hanswy" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-hanswy">
+              <div>
+                <div className="modal-pretitle">BULK DELETE CONFIRMATION</div>
+                <h3 className="modal-title-hanswy">
+                  Delete {selectedFiles.length} File{selectedFiles.length === 1 ? '' : 's'}<span className="accent-dot">?</span>
+                </h3>
+              </div>
+              <button
+                className="modal-close-btn"
+                disabled={bulkProcessing}
+                onClick={() => setShowBulkDeleteModal(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '20px' }}>
+              Are you sure you want to permanently delete <b>{selectedFiles.length} selected file{selectedFiles.length === 1 ? '' : 's'}</b>? This action cannot be undone.
+            </p>
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="btn-cancel"
+                disabled={bulkProcessing}
+                onClick={() => setShowBulkDeleteModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-admin-action primary"
+                style={{ backgroundColor: '#ef4444' }}
+                disabled={bulkProcessing}
+                onClick={handleBulkDelete}
+              >
+                {bulkProcessing ? 'Deleting...' : `Yes, Delete ${selectedFiles.length}`}
               </button>
             </div>
           </div>

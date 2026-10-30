@@ -11,6 +11,8 @@ import {
   ghRenameFile,
   ghDeleteFile,
   ghGetFile,
+  ghToggleHideFolder,
+  ghToggleHideFile,
 } from './github-storage';
 import { FolderItem, FileItem, FolderContentsResponse, BreadcrumbItem } from './types';
 
@@ -115,11 +117,12 @@ function writeLocalDb(data: LocalDatabase) {
 // ----------------------------------------------------
 
 export async function getFolderContents(
-  targetFolderId: string | null = null
+  targetFolderId: string | null = null,
+  isAdmin: boolean = false
 ): Promise<FolderContentsResponse> {
   if (isGitHubConfigured) {
     try {
-      return await ghGetFolderContents(targetFolderId);
+      return await ghGetFolderContents(targetFolderId, isAdmin);
     } catch (err) {
       console.error('GitHub storage getFolderContents error:', err);
       throw err;
@@ -133,6 +136,17 @@ export async function getFolderContents(
   const currentFolder = actualFolderId
     ? db.folders.find((f) => f.id === actualFolderId) || null
     : null;
+
+  if (currentFolder?.is_hidden && !isAdmin) {
+    return {
+      currentFolder: null,
+      breadcrumbs: [{ id: null, name: 'Root' }],
+      folders: [],
+      files: [],
+      totalItems: 0,
+      isCloudStorage: false,
+    };
+  }
 
   const breadcrumbs: BreadcrumbItem[] = [{ id: null, name: 'Root' }];
   if (currentFolder) {
@@ -151,19 +165,27 @@ export async function getFolderContents(
   }
 
   const folders = db.folders
-    .filter((f) => (actualFolderId ? f.parent_id === actualFolderId : f.parent_id === null))
+    .filter((f) => {
+      const match = actualFolderId ? f.parent_id === actualFolderId : f.parent_id === null;
+      if (!match) return false;
+      if (!isAdmin && f.is_hidden) return false;
+      return true;
+    })
     .map((f) => {
-      const subFolderCount = db.folders.filter((sub) => sub.parent_id === f.id).length;
-      const fileCount = db.files.filter((file) => file.folder_id === f.id).length;
+      const subFolderCount = db.folders.filter((sub) => sub.parent_id === f.id && (isAdmin || !sub.is_hidden)).length;
+      const fileCount = db.files.filter((file) => file.folder_id === f.id && (isAdmin || !file.is_hidden)).length;
       return {
         ...f,
         item_count: subFolderCount + fileCount,
       };
     });
 
-  const files = db.files.filter((file) =>
-    actualFolderId ? file.folder_id === actualFolderId : !file.folder_id
-  );
+  const files = db.files.filter((file) => {
+    const match = actualFolderId ? file.folder_id === actualFolderId : !file.folder_id;
+    if (!match) return false;
+    if (!isAdmin && file.is_hidden) return false;
+    return true;
+  });
 
   return {
     currentFolder,
@@ -324,6 +346,36 @@ export async function deleteFile(fileId: string): Promise<void> {
     db.files = db.files.filter((f) => f.id !== fileId);
     writeLocalDb(db);
   }
+}
+
+export async function toggleHideFolder(folderId: string, isHidden: boolean): Promise<FolderItem> {
+  if (isGitHubConfigured) {
+    return await ghToggleHideFolder(folderId, isHidden);
+  }
+
+  const db = readLocalDb();
+  const folder = db.folders.find((f) => f.id === folderId);
+  if (!folder) throw new Error('Folder tidak ditemukan');
+
+  folder.is_hidden = isHidden;
+  folder.updated_at = new Date().toISOString();
+  writeLocalDb(db);
+  return folder;
+}
+
+export async function toggleHideFile(fileId: string, isHidden: boolean): Promise<FileItem> {
+  if (isGitHubConfigured) {
+    return await ghToggleHideFile(fileId, isHidden);
+  }
+
+  const db = readLocalDb();
+  const file = db.files.find((f) => f.id === fileId);
+  if (!file) throw new Error('File tidak ditemukan');
+
+  file.is_hidden = isHidden;
+  file.updated_at = new Date().toISOString();
+  writeLocalDb(db);
+  return file;
 }
 
 export async function getFile(fileId: string): Promise<FileItem | null> {

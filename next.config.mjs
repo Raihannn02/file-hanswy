@@ -13,6 +13,14 @@ const nextConfig = {
       bodySizeLimit: '50mb',
     },
   },
+  async rewrites() {
+    return [
+      {
+        source: '/download/:id*',
+        destination: '/api/download/:id*',
+      },
+    ];
+  },
 };
 
 export default nextConfig;

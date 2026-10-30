@@ -3,6 +3,7 @@ export interface FolderItem {
   name: string;
   parent_id: string | null;
   item_count?: number;
+  is_hidden?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -16,6 +17,7 @@ export interface FileItem {
   storage_path: string;
   download_url: string;
   is_chunked?: boolean;
+  is_hidden?: boolean;
   created_at: string;
   updated_at: string;
 }

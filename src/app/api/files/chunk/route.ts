@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/lib/auth';
-import { uploadFileToGitHub, ghSaveFileMetadata, isGitHubConfigured } from '@/lib/github-storage';
+import {
+  uploadFileToGitHub,
+  ghSaveFileMetadata,
+  isGitHubConfigured,
+  consolidateGitHubChunks,
+} from '@/lib/github-storage';
 
 export const maxDuration = 60;
 
@@ -61,12 +66,30 @@ export async function POST(req: NextRequest) {
       mimeType
     );
 
-    // Jika ini adalah part terakhir, simpan metadata ke database (db.json)
+    // Jika ini adalah part terakhir, satukan seluruh part menjadi satu asset GitHub
+    // lalu simpan metadata ke database (db.json).
     if (partIndex === totalParts - 1) {
-      const finalDownloadUrl =
-        totalParts === 1
-          ? assetUrl
-          : `chunked:${totalParts}:${storagePath}`;
+      let finalDownloadUrl = assetUrl;
+      let finalAssetId: number | undefined = assetId;
+
+      if (totalParts > 1) {
+        // Auto-merge: agar file besar tetap punya satu tautan langsung GitHub
+        // (0 byte bandwidth Vercel). Jika gagal, fallback ke streaming API.
+        try {
+          const merged = await consolidateGitHubChunks(storagePath, totalParts, mimeType);
+          if (merged) {
+            finalDownloadUrl = merged.downloadUrl;
+            finalAssetId = merged.assetId;
+          } else {
+            finalDownloadUrl = `chunked:${totalParts}:${storagePath}`;
+            finalAssetId = undefined;
+          }
+        } catch (mergeErr) {
+          console.error('Auto-merge chunk error:', mergeErr);
+          finalDownloadUrl = `chunked:${totalParts}:${storagePath}`;
+          finalAssetId = undefined;
+        }
+      }
 
       const fileRecord = await ghSaveFileMetadata({
         name,
@@ -75,7 +98,7 @@ export async function POST(req: NextRequest) {
         mimeType,
         storagePath,
         downloadUrl: finalDownloadUrl,
-        githubAssetId: totalParts === 1 ? assetId : undefined,
+        githubAssetId: finalAssetId,
       });
 
       return safeJson({
