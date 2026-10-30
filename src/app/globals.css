@@ -1601,3 +1601,32 @@ input, textarea, select {
     width: 100%;
   }
 }
+
+/* Video Player Dialog */
+.video-player-dialog {
+  max-width: 800px;
+  width: 95vw;
+  padding: 0;
+  background-color: #000;
+  border: 1px solid var(--border-card);
+}
+
+.hanswy-video-element {
+  width: 100%;
+  max-height: 70vh;
+  outline: none;
+  background-color: #000;
+}
+
+.video-player-dialog .modal-header-hanswy,
+.video-player-dialog .modal-footer-hanswy {
+  background-color: var(--modal-bg);
+  padding: 16px 24px;
+}
+
+.video-player-dialog .modal-body-hanswy {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+

@@ -2,6 +2,20 @@
 
 All notable changes to the HansWY File Archive project will be documented in this file.
 
+## [3.6.0] - 2026-10-31
+
+### Added
+- **Video Streaming & Player**: An optional video player is now available for both Guest and Admin users. Play video tutorials (`.mp4`, `.webm`, `.ogg`, `.mov`) directly in the browser without downloading.
+- **Integrated Video Modal**: A dedicated player interface with playback controls, responsive scaling, and a direct download shortcut.
+
+### Fixed
+- **Zero-Bandwidth Playback**: Video playback streams directly from GitHub CDN via our 302 redirect engine, ensuring 0 bytes of Vercel bandwidth usage.
+
+### Changed
+- Updated in-app Changelog bar and release notes modal to v3.6.
+
+---
+
 ## [3.5.0] - 2026-10-30
 
 ### Added

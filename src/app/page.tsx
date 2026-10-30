@@ -24,6 +24,7 @@ import {
   Archive,
   Music,
   Video,
+  Play,
   Image as ImageIcon,
   Clock,
   Search,
@@ -162,6 +163,8 @@ export default function HansWYFileArchiveApp() {
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
   const [bulkProcessing, setBulkProcessing] = useState<boolean>(false);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState<boolean>(false);
+  const [showVideoModal, setShowVideoModal] = useState<boolean>(false);
+  const [videoFile, setVideoFile] = useState<FileItem | null>(null);
 
   // Toasts
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -487,6 +490,16 @@ export default function HansWYFileArchiveApp() {
     } finally {
       setTimeout(() => setDownloadingFileId(null), 1200);
     }
+  };
+
+  const handlePlayVideo = (file: FileItem) => {
+    setVideoFile(file);
+    setShowVideoModal(true);
+  };
+
+  const isVideoFile = (fileName: string) => {
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    return ['mp4', 'webm', 'ogg', 'mov'].includes(ext || '');
   };
 
   // Resolve the GitHub Release asset URL for a file.
@@ -1167,9 +1180,9 @@ export default function HansWYFileArchiveApp() {
             <div className="changelog-info">
               <div className="changelog-meta">
                 <span className="changelog-tag">CHANGELOG</span>
-                <span className="changelog-date">30 Oct 2026 • 20:45 WIB</span>
+                <span className="changelog-date">31 Oct 2026 • 01:55 WIB</span>
               </div>
-              <span className="changelog-title">VERSION 3.5 - SMART MULTI-SELECT & BULK ACTIONS</span>
+              <span className="changelog-title">VERSION 3.6 - VIDEO STREAMING & PLAYER</span>
             </div>
           </div>
 
@@ -1526,6 +1539,18 @@ export default function HansWYFileArchiveApp() {
                       <LinkIcon size={13} />
                     </button>
 
+                    {isVideoFile(file.name) && (
+                      <button
+                        className="item-btn-open"
+                        style={{ padding: '8px 14px', marginRight: '4px' }}
+                        onClick={() => handlePlayVideo(file)}
+                        title="Play video"
+                      >
+                        <Play size={13} />
+                        <span>Play</span>
+                      </button>
+                    )}
+
                     <button
                       className="item-btn-download"
                       onClick={() => handleDownloadFile(file)}
@@ -1574,8 +1599,55 @@ export default function HansWYFileArchiveApp() {
       </main>
 
       {/* ============================================================
-          3. MODALS (DISCLAIMER, CHANGELOG, LOGIN, FOLDER, UPLOAD, SUPPORT QRIS)
+          3. MODALS (DISCLAIMER, CHANGELOG, LOGIN, FOLDER, UPLOAD, SUPPORT QRIS, VIDEO PLAYER)
           ============================================================ */}
+
+      {/* VIDEO PLAYER MODAL */}
+      {showVideoModal && videoFile && (
+        <div className="modal-overlay" onClick={() => setShowVideoModal(false)}>
+          <div className="modal-dialog-hanswy video-player-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-hanswy">
+              <div style={{ minWidth: 0 }}>
+                <div className="modal-pretitle">VIDEO PLAYER</div>
+                <h3 className="modal-title-hanswy" style={{ fontSize: '1.1rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {videoFile.name}
+                </h3>
+              </div>
+              <button
+                className="modal-close-btn"
+                onClick={() => setShowVideoModal(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            
+            <div className="modal-body-hanswy" style={{ padding: '0', backgroundColor: '#000', position: 'relative', overflow: 'hidden' }}>
+              <video 
+                controls 
+                autoPlay 
+                className="hanswy-video-element"
+                style={{ width: '100%', display: 'block', maxHeight: '70vh' }}
+              >
+                <source src={buildDirectLink(videoFile)} type={videoFile.mime_type || 'video/mp4'} />
+                Your browser does not support the video tag.
+              </video>
+            </div>
+
+            <div className="modal-footer-hanswy" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                {formatFileSize(videoFile.size)} • {videoFile.mime_type || 'Video'}
+              </div>
+              <button
+                className="item-btn-download"
+                onClick={() => handleDownloadFile(videoFile)}
+              >
+                <Download size={13} />
+                <span>Download</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* BEFORE YOU DOWNLOAD / DISCLAIMER MODAL */}
       {showDisclaimerModal && (
@@ -1635,6 +1707,15 @@ export default function HansWYFileArchiveApp() {
             </div>
 
             <div className="modal-text-body" style={{ maxHeight: '340px', overflowY: 'auto' }}>
+              <div style={{ borderLeft: '2px solid var(--accent-cyan)', paddingLeft: '12px', marginBottom: '14px' }}>
+                <b style={{ color: 'var(--text-primary)' }}>31 Oct 2026 - 01:55 WIB (v3.6)</b>
+                <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
+                  • <b>Video Streaming &amp; Player</b>: Added an optional video player for both Guests and Admins. Watch tutorial videos directly in the browser without downloading.
+                  <br />• <b>GitHub-Powered Playback</b>: Videos stream directly from GitHub CDN, maintaining our Zero-Bandwidth policy and keeping Vercel quotas safe.
+                  <br />• <b>Integrated Player</b>: A dedicated video player modal with playback controls and quick download access.
+                </p>
+              </div>
+
               <div style={{ borderLeft: '2px solid var(--accent-cyan)', paddingLeft: '12px', marginBottom: '14px' }}>
                 <b style={{ color: 'var(--text-primary)' }}>30 Oct 2026 - 20:45 WIB (v3.5)</b>
                 <p style={{ marginTop: '4px', fontSize: '0.82rem' }}>
